@@ -1,0 +1,27 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.13.7/.schema/devbox.schema.json",
+  "packages": [
+    "python@3.11",
+    "uv@latest",
+    "stdenv.cc.cc.lib@latest"
+  ],
+  "env": {
+    "LD_LIBRARY_PATH": "$DEVBOX_PACKAGES_DIR/lib:${LD_LIBRARY_PATH:-}",
+    "UV_PROJECT_ENVIRONMENT": ".venv"
+  },
+  "shell": {
+    "init_hook": [
+      "[ -d .venv ] || uv venv --python python3.11",
+      "source .venv/bin/activate",
+      "uv sync --dev 2>/dev/null || echo 'hint: uv sync --dev to install deps'"
+    ],
+    "scripts": {
+      "test":   "uv run pytest",
+      "lint":   "uv run ruff check . && uv run mypy ccmcp",
+      "fmt":    "uv run ruff format .",
+      "serve":  "uv run python -m ccmcp serve",
+      "ingest": "uv run python -m ccmcp ingest",
+      "qdrant": "docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v \"$PWD/.qdrant:/qdrant/storage\" qdrant/qdrant"
+    }
+  }
+}
