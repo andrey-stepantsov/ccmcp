@@ -1,0 +1,24 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+  ccmcp:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    ports:
+      - "7700:7700"
+    volumes:
+      - ccmcp-data:/data
+      - ${REPOS_PATH:-$HOME/code}:/repos:ro
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      CCMCP_SOURCE_PATH: /repos
+
+volumes:
+  qdrant-data:
+  ccmcp-data:

@@ -24,9 +24,7 @@ jobs:
         run: ruff check ccmcp/ tests/
 
       - name: Unit tests
-        run: pytest tests/ -v --tb=short
-        # Integration tests (require Qdrant) are excluded here.
-        # Run locally with: pytest tests/ -v -m integration
+        run: pytest tests/ -v --tb=short -m "not slow and not integration"
 
   typecheck:
     runs-on: ubuntu-latest

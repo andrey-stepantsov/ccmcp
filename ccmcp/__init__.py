@@ -1,1 +1,1 @@
-# kb package
+# ccmcp — Claude Code MCP knowledge base

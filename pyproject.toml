@@ -5,8 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "ccmcp"
 version = "0.1.0"
-description = "Claude Code MCP knowledge base with hybrid vector search and MCP integration"
-requires-python = ">=3.11"
+description = "Claude Code MCP knowledge base with hybrid vector search"
+requires-python = ">=3.12"
 dependencies = [
   "qdrant-client>=1.9",
   "fastembed>=0.3",
@@ -20,6 +20,9 @@ dependencies = [
   "numpy>=1.26",
   "click>=8.1",
   "rich>=13.0",
+  "mcp[cli]>=1.0",
+  "uvicorn[standard]>=0.30",
+  "lxml[html_clean]>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +31,7 @@ dev = [
   "pytest-asyncio>=0.23",
   "ruff>=0.4",
   "mypy>=1.10",
+  "respx>=0.21",
 ]
 
 [project.scripts]
@@ -35,16 +39,20 @@ ccmcp = "ccmcp.__main__:cli"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = false
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "integration: requires a running Qdrant instance",
+  "slow: downloads ML models, skip in CI",
+]
