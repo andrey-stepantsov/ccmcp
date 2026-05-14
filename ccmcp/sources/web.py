@@ -65,9 +65,12 @@ def fetch_all(
     all_urls = list(urls)
     for sitemap in sitemaps:
         all_urls.extend(_fetch_sitemap(sitemap, user_agent))
-    # deduplicate while preserving order
     seen: set[str] = set()
-    deduped = [u for u in all_urls if not (u in seen or seen.add(u))]  # type: ignore[func-returns-value]
+    deduped: list[str] = []
+    for u in all_urls:
+        if u not in seen:
+            seen.add(u)
+            deduped.append(u)
 
     results: list[SourceFile] = []
     for url in deduped:

@@ -1,4 +1,4 @@
-from ccmcp.chunker import MAX_TOKENS, MIN_TOKENS, _tok, chunk_file
+from ccmcp.chunker import MAX_TOKENS, _tok, chunk_file
 
 URI = "file:///test"
 
@@ -65,11 +65,19 @@ def test_text_splits_on_blank_lines():
 
 
 def test_small_chunks_merged():
-    # Two tiny paragraphs should be merged into one
-    content = "tiny.\n\ntiny."
+    # 3 small paragraphs individually below MIN_TOKENS, combined below MAX_TOKENS — merge to 1
+    small = "hello world. " * 4  # ~13 tokens each
+    content = f"{small}\n\n{small}\n\n{small}"
     chunks = chunk_file("doc.md", content, URI)
-    # Both tiny paragraphs are below MIN_TOKENS and should merge
-    assert all(_tok(c.text) >= MIN_TOKENS or len(chunks) == 1 for c in chunks)
+    assert len(chunks) < 3
+
+
+def test_large_chunks_not_merged():
+    # Paragraphs too large to combine (each ~325 tokens, combined ~651 > MAX_TOKENS)
+    big = "word " * 260
+    content = f"{big}\n\n{big}"
+    chunks = chunk_file("doc.md", content, URI)
+    assert len(chunks) == 2
 
 
 def test_go_function_split():
@@ -95,3 +103,33 @@ def test_yaml_falls_back_to_text():
     content = "key: value\nother: thing\n"
     chunks = chunk_file("config.yaml", content, URI)
     assert len(chunks) >= 1
+
+
+def test_rst_splits_on_headings():
+    content = "Introduction\n============\n\nIntro text.\n\nDetails\n-------\n\nMore text."
+    chunks = chunk_file("doc.rst", content, URI)
+    texts = " ".join(c.text for c in chunks)
+    assert "Introduction" in texts
+    assert "Details" in texts
+
+
+def test_rst_section_field():
+    content = "MySection\n=========\n\nSome content here."
+    chunks = chunk_file("doc.rst", content, URI)
+    assert any(c.section == "MySection" for c in chunks)
+
+
+def test_rst_no_headings_falls_back_to_text():
+    content = "Just plain paragraphs.\n\nNo RST headings at all."
+    chunks = chunk_file("doc.rst", content, URI)
+    assert len(chunks) >= 1
+    assert all(c.source_uri == URI for c in chunks)
+
+
+def test_hard_split_very_long_line():
+    # A single line of 1000 tokens must be split into multiple chunks
+    long_line = ("word " * 1000).strip()
+    chunks = chunk_file("notes.txt", long_line, URI)
+    assert len(chunks) > 1
+    for c in chunks:
+        assert _tok(c.text) <= MAX_TOKENS * 1.1

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import functools
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -15,6 +16,7 @@ def _matches_ignore(name: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(name, p) for p in patterns)
 
 
+@functools.lru_cache(maxsize=512)
 def _gitignore_patterns(directory: str) -> list[str]:
     gi = Path(directory) / ".gitignore"
     if not gi.exists():

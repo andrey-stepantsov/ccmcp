@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -14,8 +15,9 @@ _DIRECT = {"text/plain", "text/markdown"}
 
 
 def _service(credentials_file: str):
+    resolved = Path(credentials_file).expanduser().resolve()
     creds = service_account.Credentials.from_service_account_file(
-        credentials_file, scopes=_SCOPES
+        str(resolved), scopes=_SCOPES
     )
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 

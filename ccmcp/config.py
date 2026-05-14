@@ -96,7 +96,7 @@ class StateConfig:
 @dataclass
 class McpConfig:
     port: int = 7700
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     result_limit: int = 10
 
 
@@ -181,10 +181,10 @@ def load_config(path: str | None = None) -> Config:
             )
 
     # CCMCP_SOURCE_PATH overrides filesystem roots (Docker use case)
-    if source_path := os.environ.get("CCMCP_SOURCE_PATH", "/repos"):
-        if not cfg.sources.filesystem.roots:
-            cfg.sources.filesystem.roots = [source_path]
-            cfg.sources.filesystem.enabled = True
+    source_path = os.environ.get("CCMCP_SOURCE_PATH")
+    if source_path and not cfg.sources.filesystem.roots:
+        cfg.sources.filesystem.roots = [source_path]
+        cfg.sources.filesystem.enabled = True
 
     if st := raw.get("state"):
         cfg.state = StateConfig(

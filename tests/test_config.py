@@ -12,13 +12,19 @@ def _write_config(tmp_path: Path, data: dict) -> str:
 
 
 def test_defaults_when_no_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("CCMCP_SOURCE_PATH", "")
+    monkeypatch.delenv("CCMCP_SOURCE_PATH", raising=False)
     monkeypatch.delenv("QDRANT_URL", raising=False)
     monkeypatch.delenv("QDRANT_COLLECTION", raising=False)
     cfg = load_config(str(tmp_path / "nonexistent.yaml"))
     assert cfg.qdrant.url == "http://localhost:6333"
     assert cfg.qdrant.collection == "techdocs"
     assert cfg.mcp.port == 7700
+
+
+def test_source_path_absent_leaves_roots_empty(tmp_path, monkeypatch):
+    monkeypatch.delenv("CCMCP_SOURCE_PATH", raising=False)
+    cfg = load_config(str(tmp_path / "nonexistent.yaml"))
+    assert cfg.sources.filesystem.roots == []
 
 
 def test_file_overrides_defaults(tmp_path):

@@ -2,19 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import UTC, datetime
 
 import numpy as np
 from fastembed.sparse.sparse_embedding_base import SparseEmbedding
 from qdrant_client import QdrantClient, models
 
 from ccmcp.chunker import Chunk
+from ccmcp.state import _now
 
 _ARTIFACT_COLLECTION = "ccmcp-artifacts"
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _sparse_vec(s: SparseEmbedding) -> models.SparseVector:
@@ -25,11 +21,18 @@ def _sparse_vec(s: SparseEmbedding) -> models.SparseVector:
 
 
 class VectorStore:
-    def __init__(self, url: str, collection: str, api_key: str = ""):
+    def __init__(
+        self,
+        url: str,
+        collection: str,
+        api_key: str = "",
+        artifact_collection: str = _ARTIFACT_COLLECTION,
+    ):
         self._client = QdrantClient(url=url, api_key=api_key or None)
         self._collection = collection
+        self._artifact_collection = artifact_collection
 
-    def setup(self):
+    def setup(self, dense_dim: int = 384):
         existing = {c.name for c in self._client.get_collections().collections}
 
         if self._collection not in existing:
@@ -37,7 +40,7 @@ class VectorStore:
                 collection_name=self._collection,
                 vectors_config={
                     "dense": models.VectorParams(
-                        size=384,
+                        size=dense_dim,
                         distance=models.Distance.COSINE,
                         quantization_config=models.ScalarQuantizationConfig(
                             scalar=models.ScalarQuantization(
@@ -53,16 +56,23 @@ class VectorStore:
                 },
             )
 
-        if _ARTIFACT_COLLECTION not in existing:
+        if self._artifact_collection not in existing:
             self._client.create_collection(
-                collection_name=_ARTIFACT_COLLECTION,
+                collection_name=self._artifact_collection,
                 vectors_config={
-                    "dense": models.VectorParams(size=384, distance=models.Distance.COSINE)
+                    "dense": models.VectorParams(size=dense_dim, distance=models.Distance.COSINE)
                 },
                 sparse_vectors_config={
                     "sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)
                 },
             )
+
+    def drop_collections(self):
+        for name in (self._collection, self._artifact_collection):
+            try:
+                self._client.delete_collection(name)
+            except Exception:
+                pass
 
     def doc_id(self, source_uri: str) -> str:
         return hashlib.sha256(source_uri.encode()).hexdigest()
@@ -158,16 +168,16 @@ class VectorStore:
     ) -> str:
         point_id = str(uuid.uuid4())
         self._client.upsert(
-            collection_name=_ARTIFACT_COLLECTION,
+            collection_name=self._artifact_collection,
             points=[models.PointStruct(
                 id=point_id,
                 vector={"dense": dense.tolist(), "sparse": _sparse_vec(sparse)},
                 payload={
-                    "text": text,
+                    **metadata,           # caller-supplied fields first
+                    "text": text,         # system fields always win
                     "source_type": "artifact",
                     "session_id": session_id,
                     "ingested_at": _now(),
-                    **metadata,
                 },
             )],
         )
@@ -175,7 +185,7 @@ class VectorStore:
 
     def cleanup_artifacts(self, cutoff_iso: str):
         self._client.delete(
-            collection_name=_ARTIFACT_COLLECTION,
+            collection_name=self._artifact_collection,
             points_selector=models.FilterSelector(filter=models.Filter(must=[
                 models.FieldCondition(
                     key="ingested_at",

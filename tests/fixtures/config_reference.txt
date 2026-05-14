@@ -1,0 +1,70 @@
+ccmcp Configuration Reference
+
+All settings live in config.yaml at the project root. Environment variables
+override file settings. The config file is gitignored; copy config.example.yaml
+to get started.
+
+
+qdrant.url
+  URL of the Qdrant instance.
+  Default: http://localhost:6333
+  Env override: QDRANT_URL
+
+qdrant.collection
+  Name of the Qdrant collection for document chunks.
+  Default: techdocs
+  Env override: QDRANT_COLLECTION
+
+qdrant.api_key
+  API key for Qdrant Cloud. Leave empty for local instances.
+  Env override: QDRANT_API_KEY
+
+
+embedding.dense_model
+  HuggingFace model identifier for dense embeddings.
+  Default: BAAI/bge-small-en-v1.5
+
+embedding.sparse_model
+  Model identifier for sparse BM25 embeddings.
+  Default: Qdrant/bm25
+
+embedding.rotation_matrix
+  Path to the orthogonal rotation matrix (.npy file).
+  Generated once by: ccmcp setup
+
+
+sources.filesystem.roots
+  List of directory paths to scan and watch for document changes.
+  Example: [~/projects/my-repo, ~/docs]
+
+sources.filesystem.watch
+  Enable live filesystem watching with polling observer.
+  Default: true
+
+sources.web.urls
+  List of URLs to fetch and index.
+
+sources.web.sitemaps
+  List of sitemap URLs; all <loc> entries are fetched.
+
+
+mcp.host
+  Bind address for the SSE MCP server.
+  Default: 127.0.0.1
+
+mcp.port
+  TCP port for the SSE MCP server.
+  Default: 7700
+
+mcp.result_limit
+  Maximum results returned by qdrant_find.
+  Default: 10
+
+
+state.db_path
+  Path to the SQLite state database tracking ingested sources.
+  Default: ~/.local/share/ccmcp/state.db
+
+state.artifact_ttl_days
+  Days before agent artifacts are automatically removed.
+  Default: 30

@@ -44,8 +44,10 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
         "Returns up to `limit` results ranked by hybrid dense+sparse relevance."
     ))
     def qdrant_find(query: str, limit: int = 10) -> str:
+        query = query[:8192]
+        limit = max(1, min(limit, cfg.mcp.result_limit))
         dense, sparse_list = embedder.embed([query])
-        results = store.search(dense[0], sparse_list[0], limit=min(limit, cfg.mcp.result_limit))
+        results = store.search(dense[0], sparse_list[0], limit=limit)
         if not results:
             return "No results found."
         parts = []
@@ -106,7 +108,7 @@ def setup(ctx):
     except FileExistsError as e:
         console.print(f"[yellow]⚠[/yellow] {e}")
 
-    store.setup()
+    store.setup(embedder.dim)
     console.print(
         f"[green]✓[/green] Qdrant collections ready ({cfg.qdrant.collection}, ccmcp-artifacts)"
     )
@@ -199,8 +201,7 @@ def reset(ctx):
     if confirm != "RESET":
         console.print("Aborted.")
         return
-    store._client.delete_collection(cfg.qdrant.collection)
-    store._client.delete_collection("ccmcp-artifacts")
+    store.drop_collections()
     if Path(cfg.state.db_path).exists():
         Path(cfg.state.db_path).unlink()
     console.print("[red]Reset complete. Run 'ccmcp setup' before next use.[/red]")
@@ -218,6 +219,17 @@ def serve(ctx, host: str | None, port: int | None):
     mcp = _build_mcp(cfg, embedder, store)
     console.print(f"[bold]ccmcp MCP server[/bold] → http://{h}:{p}/sse")
     uvicorn.run(mcp.sse_app(), host=h, port=p, log_level="warning")
+
+
+@cli.command()
+@click.pass_context
+def validate(ctx):
+    """Run end-to-end validation scenarios against a temporary Qdrant collection."""
+    from ccmcp.validate import run_validation
+    cfg, embedder, _, _ = _components(ctx.obj["config_path"])
+    console.print("[bold]ccmcp validate[/bold]")
+    passed, total = run_validation(cfg, embedder, console=console)
+    raise SystemExit(0 if passed == total else 1)
 
 
 @cli.command()
