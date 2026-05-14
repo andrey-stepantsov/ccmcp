@@ -37,7 +37,12 @@ class Controller:
         self._store = store
         self._state = state
 
-    def ingest_file(self, sf: SourceFile):
+    def ingest_file(
+        self,
+        sf: SourceFile,
+        source_root: str = "",
+        tags: list[str] | None = None,
+    ):
         h = _content_hash(sf.content)
         record = self._state.get(sf.source_uri)
         now = _now()
@@ -55,7 +60,10 @@ class Controller:
             return
 
         dense, sparse = self._embedder.embed([c.text for c in chunks])
-        count = self._store.upsert(chunks, dense, sparse, version, _source_type(sf.source_uri))
+        count = self._store.upsert(
+            chunks, dense, sparse, version, _source_type(sf.source_uri),
+            source_root=source_root, tags=tags,
+        )
         if count != len(chunks):
             raise RuntimeError(
                 f"Upsert failed: expected {len(chunks)} points, got {count} for {sf.source_uri}"
@@ -81,18 +89,24 @@ class Controller:
         cfg = self._cfg
 
         if cfg.sources.filesystem.enabled and cfg.sources.filesystem.roots:
+            from ccmcp.marker import load as load_marker
             from ccmcp.sources import filesystem as fs_mod
-            files = fs_mod.scan(
-                roots=cfg.sources.filesystem.roots,
-                extensions=cfg.sources.filesystem.extensions,
-                ignore=cfg.sources.filesystem.ignore,
-            )
-            log.info("filesystem scan: %d files found", len(files))
-            for sf in files:
-                try:
-                    self.ingest_file(sf)
-                except Exception as exc:
-                    log.warning("ingest failed %s: %s", sf.source_uri, exc)
+
+            for root in cfg.sources.filesystem.roots:
+                marker = load_marker(root)
+                source_root = marker.source_root if marker else ""
+                tags = marker.tags if marker else None
+                files = fs_mod.scan(
+                    roots=[root],
+                    extensions=cfg.sources.filesystem.extensions,
+                    ignore=cfg.sources.filesystem.ignore,
+                )
+                log.info("filesystem scan %s: %d files found", root, len(files))
+                for sf in files:
+                    try:
+                        self.ingest_file(sf, source_root=source_root, tags=tags)
+                    except Exception as exc:
+                        log.warning("ingest failed %s: %s", sf.source_uri, exc)
 
         if cfg.sources.web.enabled and cfg.sources.web.urls:
             from ccmcp.sources import web as web_mod
@@ -136,15 +150,39 @@ class Controller:
         if not (self._cfg.sources.filesystem.enabled and self._cfg.sources.filesystem.roots):
             return
 
+        from ccmcp.marker import load as load_marker
         from ccmcp.sources import filesystem as fs_mod
+
+        fscfg = self._cfg.sources.filesystem
+
+        # Build a prefix→marker mapping so per-file events carry the right metadata.
+        root_markers = {}
+        for root in fscfg.roots:
+            import os
+            abs_root = os.path.realpath(root)
+            marker = load_marker(root)
+            root_markers[abs_root] = marker
+
+        def _marker_for_path(path: str):
+            import os
+            abs_path = os.path.realpath(path)
+            for abs_root, marker in root_markers.items():
+                if abs_path.startswith(abs_root + os.sep) or abs_path == abs_root:
+                    return marker
+            return None
 
         def on_change(sf: SourceFile):
             try:
-                self.ingest_file(sf)
+                file_path = sf.source_uri.removeprefix("file://")
+                marker = _marker_for_path(file_path)
+                self.ingest_file(
+                    sf,
+                    source_root=marker.source_root if marker else "",
+                    tags=marker.tags if marker else None,
+                )
             except Exception as exc:
                 log.warning("watch callback failed %s: %s", sf.source_uri, exc)
 
-        fscfg = self._cfg.sources.filesystem
         observer = fs_mod.watch(
             roots=fscfg.roots,
             extensions=fscfg.extensions,

@@ -1,0 +1,23 @@
+# .ccmcp — project context marker
+#
+# Presence of this file in a project root does two things:
+#   1. Opts the project in to ccmcp indexing (only roots with this file are stamped).
+#   2. Declares which other projects' context this project needs when searching.
+#
+# Copy to .ccmcp (no extension) in your project root.
+
+# Human-readable name for this project. Defaults to the directory name.
+name: my-project
+
+# Tags stamped on every chunk indexed from this root.
+# Used by other projects' `include` lists to pull in this project's content.
+tags:
+  - python
+  - backend
+
+# Names/tags of other projects whose indexed content should be included
+# when qdrant_find is called from this project's MCP session.
+# A chunk is included if its `tags` field overlaps with any value here.
+include:
+  - shared-lib
+  - common-utils

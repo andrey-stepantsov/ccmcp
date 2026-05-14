@@ -84,6 +84,8 @@ class VectorStore:
         sparse: list[SparseEmbedding],
         version: int,
         source_type: str,
+        source_root: str = "",
+        tags: list[str] | None = None,
     ) -> int:
         if not chunks:
             return 0
@@ -109,6 +111,8 @@ class VectorStore:
                     "content_hash": f"sha256:{content_hash}",
                     "version": version,
                     "ingested_at": now,
+                    "source_root": source_root,
+                    "tags": tags or [],
                 },
             ))
         self._client.upsert(collection_name=self._collection, points=points)
@@ -145,6 +149,7 @@ class VectorStore:
         dense: np.ndarray,
         sparse: SparseEmbedding,
         limit: int = 10,
+        filter: models.Filter | None = None,
     ) -> list[dict]:
         results = self._client.query_points(
             collection_name=self._collection,
@@ -153,6 +158,7 @@ class VectorStore:
                 models.Prefetch(query=_sparse_vec(sparse), using="sparse", limit=20),
             ],
             query=models.FusionQuery(fusion=models.Fusion.RRF),
+            query_filter=filter,
             limit=limit,
             with_payload=True,
         )

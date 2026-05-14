@@ -8,7 +8,8 @@ from threading import Thread
 
 import click
 import uvicorn
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
+from qdrant_client import models as qdrant_models
 from rich.console import Console
 from rich.table import Table
 
@@ -36,6 +37,63 @@ def _components(config_path: str | None):
     return cfg, embedder, store, state
 
 
+async def _roots_filter(ctx: Context) -> qdrant_models.Filter | None:
+    """Build a Qdrant filter scoped to the session's MCP roots.
+
+    Returns None (unfiltered) when:
+    - the client didn't send roots, or
+    - no active root contains a .ccmcp marker file.
+    """
+    from pathlib import Path as _Path
+
+    from ccmcp.marker import load as load_marker
+
+    try:
+        result = await ctx.request_context.session.list_roots()
+        roots = result.roots
+    except Exception:
+        return None
+
+    if not roots:
+        return None
+
+    root_paths: list[str] = []
+    include_tags: list[str] = []
+
+    for root in roots:
+        raw_uri = str(root.uri)
+        # Root URIs are always file:// per the MCP spec
+        path = raw_uri.removeprefix("file://")
+        try:
+            resolved = str(_Path(path).resolve())
+        except Exception:
+            resolved = path
+
+        marker = load_marker(resolved)
+        if marker:
+            root_paths.append(marker.source_root)
+            include_tags.extend(marker.include)
+
+    if not root_paths:
+        return None  # no .ccmcp files → unscoped search
+
+    # Match any chunk from an active root, OR carrying an included tag.
+    conditions: list[qdrant_models.Condition] = [
+        qdrant_models.FieldCondition(
+            key="source_root",
+            match=qdrant_models.MatchAny(any=root_paths),
+        )
+    ]
+    if include_tags:
+        conditions.append(
+            qdrant_models.FieldCondition(
+                key="tags",
+                match=qdrant_models.MatchAny(any=include_tags),
+            )
+        )
+    return qdrant_models.Filter(should=conditions)
+
+
 def _build_mcp(cfg, embedder, store) -> FastMCP:
     mcp = FastMCP("ccmcp", description="Hybrid vector search over your codebase")
 
@@ -43,11 +101,12 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
         "Search the knowledge base for passages relevant to a query. "
         "Returns up to `limit` results ranked by hybrid dense+sparse relevance."
     ))
-    def qdrant_find(query: str, limit: int = 10) -> str:
+    async def qdrant_find(query: str, limit: int = 10, ctx: Context = None) -> str:
         query = query[:8192]
         limit = max(1, min(limit, cfg.mcp.result_limit))
+        search_filter = await _roots_filter(ctx) if ctx is not None else None
         dense, sparse_list = embedder.embed([query])
-        results = store.search(dense[0], sparse_list[0], limit=limit)
+        results = store.search(dense[0], sparse_list[0], limit=limit, filter=search_filter)
         if not results:
             return "No results found."
         parts = []

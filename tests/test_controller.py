@@ -42,7 +42,7 @@ def ctrl():
     embedder.embed.side_effect = embed_side_effect
 
     store = MagicMock()
-    store.upsert.side_effect = lambda chunks, dense, sparse, version, source_type: len(chunks)
+    store.upsert.side_effect = lambda chunks, dense, sparse, version, source_type, **_kw: len(chunks)
     store.doc_id.return_value = "abc123"
 
     state = MagicMock()
