@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 import uuid
 
 import numpy as np
@@ -8,6 +9,7 @@ from fastembed.sparse.sparse_embedding_base import SparseEmbedding
 from qdrant_client import QdrantClient, models
 
 from ccmcp.chunker import Chunk
+from ccmcp.metrics import SEARCH_RESULTS_RETURNED, SEARCH_SECONDS
 from ccmcp.state import _now
 
 _ARTIFACT_COLLECTION = "ccmcp-artifacts"
@@ -151,6 +153,7 @@ class VectorStore:
         limit: int = 10,
         filter: models.Filter | None = None,
     ) -> list[dict]:
+        t0 = time.perf_counter()
         results = self._client.query_points(
             collection_name=self._collection,
             prefetch=[
@@ -162,7 +165,10 @@ class VectorStore:
             limit=limit,
             with_payload=True,
         )
-        return [p.payload for p in results.points if p.payload]
+        hits = [p.payload for p in results.points if p.payload]
+        SEARCH_SECONDS.observe(time.perf_counter() - t0)
+        SEARCH_RESULTS_RETURNED.observe(len(hits))
+        return hits
 
     def store_artifact(
         self,
@@ -206,5 +212,13 @@ class VectorStore:
             "points_count": info.points_count,
             "vectors_count": info.vectors_count,
             "indexed_vectors_count": info.indexed_vectors_count,
+            "segments_count": info.segments_count,
+            "status": str(info.status),
+        }
+
+    def artifact_collection_info(self) -> dict:
+        info = self._client.get_collection(self._artifact_collection)
+        return {
+            "points_count": info.points_count,
             "status": str(info.status),
         }

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
 from fastembed import SparseTextEmbedding, TextEmbedding
 from fastembed.sparse.sparse_embedding_base import SparseEmbedding
+
+from ccmcp.metrics import EMBED_BATCH_SIZE, EMBED_SECONDS
 
 
 class Embedder:
@@ -42,8 +45,11 @@ class Embedder:
 
     def embed(self, texts: list[str]) -> tuple[np.ndarray, list[SparseEmbedding]]:
         self._load()
+        EMBED_BATCH_SIZE.observe(len(texts))
+        t0 = time.perf_counter()
         dense = np.array(list(self._dense_embedder.embed(texts)), dtype=np.float32)
         if self._R is not None:
             dense = dense @ self._R
         sparse = list(self._sparse_embedder.embed(texts))
+        EMBED_SECONDS.observe(time.perf_counter() - t0)
         return dense, sparse

@@ -236,19 +236,50 @@ def ingest(ctx, path_or_url: str):
 @cli.command()
 @click.pass_context
 def status(ctx):
-    """Show collection stats and indexed source count."""
+    """Show collection stats, store sizes, and indexed source count."""
     cfg, _, store, state = _components(ctx.obj["config_path"])
 
+    # ── Main collection ──────────────────────────────────────────────────────
     info = store.collection_info()
-    t = Table(title=f"Collection: {cfg.qdrant.collection}")
+    t = Table(title=f"Collection: {cfg.qdrant.collection}", show_header=True)
     t.add_column("Metric")
     t.add_column("Value", justify="right")
     for k, v in info.items():
         t.add_row(k, str(v))
     console.print(t)
 
+    # ── Artifact collection ──────────────────────────────────────────────────
+    try:
+        ainfo = store.artifact_collection_info()
+        at = Table(title="Collection: ccmcp-artifacts", show_header=True)
+        at.add_column("Metric")
+        at.add_column("Value", justify="right")
+        for k, v in ainfo.items():
+            at.add_row(k, str(v))
+        console.print(at)
+    except Exception:
+        console.print("[yellow]Artifact collection not available.[/yellow]")
+
+    # ── State DB ─────────────────────────────────────────────────────────────
     records = state.all()
+    by_type: dict[str, int] = {}
+    for r in records:
+        prefix = (
+            "fs" if r.source_uri.startswith("file://")
+            else "web" if r.source_uri.startswith("http")
+            else "drive" if r.source_uri.startswith("drive://")
+            else "other"
+        )
+        by_type[prefix] = by_type.get(prefix, 0) + 1
+
     console.print(f"\n[bold]{len(records)}[/bold] sources in state DB")
+    for stype, count in sorted(by_type.items()):
+        console.print(f"  {stype}: {count}")
+
+    console.print(
+        f"\nMetrics endpoint (when server is running): "
+        f"http://{cfg.mcp.host}:{cfg.mcp.port}/metrics"
+    )
 
 
 @cli.command()
@@ -272,12 +303,16 @@ def reset(ctx):
 @click.pass_context
 def serve(ctx, host: str | None, port: int | None):
     """Start the MCP SSE server (for Claude Code and Cursor)."""
-    cfg, embedder, store, _ = _components(ctx.obj["config_path"])
+    from ccmcp.metrics import make_observable_app, start_collection_poller
+    cfg, embedder, store, state = _components(ctx.obj["config_path"])
     h = host or cfg.mcp.host
     p = port or cfg.mcp.port
     mcp = _build_mcp(cfg, embedder, store)
+    start_collection_poller(store, state)
+    app = make_observable_app(mcp.sse_app())
     console.print(f"[bold]ccmcp MCP server[/bold] → http://{h}:{p}/sse")
-    uvicorn.run(mcp.sse_app(), host=h, port=p, log_level="warning")
+    console.print(f"[dim]Prometheus metrics → http://{h}:{p}/metrics[/dim]")
+    uvicorn.run(app, host=h, port=p, log_level="warning")
 
 
 @cli.command()
@@ -298,6 +333,7 @@ def validate(ctx):
 def start(ctx, host: str | None, port: int | None):
     """Start ingestion controller and MCP SSE server together (Docker entrypoint)."""
     from ccmcp.controller import Controller
+    from ccmcp.metrics import make_observable_app, start_collection_poller
     cfg, embedder, store, state = _components(ctx.obj["config_path"])
     h = host or cfg.mcp.host
     p = port or cfg.mcp.port
@@ -306,9 +342,12 @@ def start(ctx, host: str | None, port: int | None):
     t.start()
     console.print("[bold]Controller started in background.[/bold]")
 
+    start_collection_poller(store, state)
     mcp = _build_mcp(cfg, embedder, store)
+    app = make_observable_app(mcp.sse_app())
     console.print(f"[bold]ccmcp MCP server[/bold] → http://{h}:{p}/sse")
-    uvicorn.run(mcp.sse_app(), host=h, port=p, log_level="warning")
+    console.print(f"[dim]Prometheus metrics → http://{h}:{p}/metrics[/dim]")
+    uvicorn.run(app, host=h, port=p, log_level="warning")
 
 
 if __name__ == "__main__":

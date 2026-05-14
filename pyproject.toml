@@ -21,6 +21,7 @@ dependencies = [
   "click>=8.1",
   "rich>=13.0",
   "mcp[cli]>=1.0",
+  "prometheus-client>=0.20",
   "uvicorn[standard]>=0.30",
   "lxml[html_clean]>=5.0",
 ]

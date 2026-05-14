@@ -7,6 +7,13 @@ import time
 from ccmcp.chunker import chunk_file
 from ccmcp.config import Config
 from ccmcp.embedder import Embedder
+from ccmcp.metrics import (
+    CHUNK_CHARS,
+    CHUNKS_INGESTED,
+    DOCUMENTS_INGESTED,
+    INGEST_ERRORS,
+    INGEST_SECONDS,
+)
 from ccmcp.sources import SourceFile
 from ccmcp.state import SourceRecord, StateDB, _now
 from ccmcp.store import VectorStore
@@ -28,6 +35,13 @@ def _source_type(uri: str) -> str:
     if uri.startswith("http://") or uri.startswith("https://"):
         return "web"
     raise ValueError(f"Unknown URI scheme: {uri!r}")
+
+
+def _source_type_safe(uri: str) -> str:
+    try:
+        return _source_type(uri)
+    except ValueError:
+        return "unknown"
 
 
 class Controller:
@@ -52,6 +66,8 @@ class Controller:
             self._state.upsert(record)
             return
 
+        stype = _source_type(sf.source_uri)
+        t0 = time.perf_counter()
         version = (record.version + 1) if record else 1
         # Non-file:// URIs (web, drive) use text chunking; pass empty path to fall through
         path = sf.source_uri.removeprefix("file://") if sf.source_uri.startswith("file://") else ""
@@ -59,15 +75,21 @@ class Controller:
         if not chunks:
             return
 
+        for c in chunks:
+            CHUNK_CHARS.observe(len(c.text))
+
         dense, sparse = self._embedder.embed([c.text for c in chunks])
         count = self._store.upsert(
-            chunks, dense, sparse, version, _source_type(sf.source_uri),
+            chunks, dense, sparse, version, stype,
             source_root=source_root, tags=tags,
         )
         if count != len(chunks):
             raise RuntimeError(
                 f"Upsert failed: expected {len(chunks)} points, got {count} for {sf.source_uri}"
             )
+        INGEST_SECONDS.observe(time.perf_counter() - t0)
+        CHUNKS_INGESTED.labels(source_type=stype).inc(count)
+        DOCUMENTS_INGESTED.labels(source_type=stype).inc()
         log.info("upserted %d chunks for %s (v%d)", count, sf.source_uri, version)
 
         if record:
@@ -107,6 +129,7 @@ class Controller:
                         self.ingest_file(sf, source_root=source_root, tags=tags)
                     except Exception as exc:
                         log.warning("ingest failed %s: %s", sf.source_uri, exc)
+                        INGEST_ERRORS.labels(source_type=_source_type_safe(sf.source_uri)).inc()
 
         if cfg.sources.web.enabled and cfg.sources.web.urls:
             from ccmcp.sources import web as web_mod
@@ -122,6 +145,7 @@ class Controller:
                     self.ingest_file(sf)
                 except Exception as exc:
                     log.warning("ingest failed %s: %s", sf.source_uri, exc)
+                    INGEST_ERRORS.labels(source_type=_source_type_safe(sf.source_uri)).inc()
 
         if cfg.sources.google_drive.enabled and cfg.sources.google_drive.credentials_file:
             from ccmcp.sources import drive as drive_mod
@@ -135,6 +159,7 @@ class Controller:
                     self.ingest_file(sf)
                 except Exception as exc:
                     log.warning("ingest failed %s: %s", sf.source_uri, exc)
+                    INGEST_ERRORS.labels(source_type=_source_type_safe(sf.source_uri)).inc()
 
         self._cleanup_orphans(scan_start)
 
