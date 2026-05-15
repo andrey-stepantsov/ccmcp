@@ -212,7 +212,15 @@ def cli(ctx, config):
 @cli.command()
 @click.pass_context
 def setup(ctx):
-    """Initialize Qdrant collections and generate rotation matrix."""
+    """Initialize Qdrant collections and generate rotation matrix.
+
+    Creates the Qdrant collection with hybrid dense+sparse vectors and
+    generates rotation_matrix.npy (required before first ingestion).
+    Safe to run multiple times — skips existing collections and refuses
+    to overwrite the rotation matrix.
+
+    Prints the MCP config snippet to add to ~/.claude.json when done.
+    """
     cfg, embedder, store, _ = _components(ctx.obj["config_path"])
     console.print("[bold]ccmcp setup[/bold]")
 
@@ -242,7 +250,13 @@ def setup(ctx):
 @cli.command()
 @click.pass_context
 def scan(ctx):
-    """One-shot full ingestion of all enabled sources."""
+    """Index all configured sources once and exit.
+
+    Walks filesystem roots, fetches web URLs, and polls Google Drive.
+    Skips unchanged files (SHA-256 dedup). Removes vectors for deleted
+    files. Safe to run repeatedly — re-run any time to pick up changes
+    without using watch mode.
+    """
     from ccmcp.controller import Controller
     cfg, embedder, store, state = _components(ctx.obj["config_path"])
     console.print("[bold]Scanning…[/bold]")
@@ -253,7 +267,12 @@ def scan(ctx):
 @cli.command()
 @click.pass_context
 def watch(ctx):
-    """Full scan then continuous watch (polling + hourly rescan)."""
+    """Scan once then watch filesystem for changes continuously.
+
+    Runs a full scan on startup, then watches configured roots for
+    file changes (inotify on Linux; polling on WSL2 /mnt/ paths).
+    Re-scans all sources every hour. Runs until interrupted (Ctrl-C).
+    """
     from ccmcp.controller import Controller
     cfg, embedder, store, state = _components(ctx.obj["config_path"])
     console.print("[bold]Watch mode started.[/bold]")
@@ -264,7 +283,13 @@ def watch(ctx):
 @click.argument("path_or_url")
 @click.pass_context
 def ingest(ctx, path_or_url: str):
-    """Ingest a single file or URL immediately."""
+    """Ingest a single file or URL immediately.
+
+    \b
+    Examples:
+      ccmcp ingest ~/notes/architecture.md
+      ccmcp ingest https://docs.example.com/api/overview
+    """
     from ccmcp.controller import Controller
     from ccmcp.sources import SourceFile
     cfg, embedder, store, state = _components(ctx.obj["config_path"])
@@ -291,7 +316,13 @@ def ingest(ctx, path_or_url: str):
 @cli.command()
 @click.pass_context
 def status(ctx):
-    """Show collection stats, store sizes, and indexed source count."""
+    """Show collection stats and indexed source counts.
+
+    Prints Qdrant point/vector counts for the main and artifact
+    collections, and a per-type breakdown of indexed sources from
+    the state DB (fs / web / drive). Also shows the Prometheus
+    metrics endpoint URL.
+    """
     cfg, _, store, state = _components(ctx.obj["config_path"])
 
     # ── Main collection ──────────────────────────────────────────────────────
@@ -340,7 +371,12 @@ def status(ctx):
 @cli.command()
 @click.pass_context
 def reset(ctx):
-    """Drop Qdrant collection and clear state DB. Requires confirmation."""
+    """Drop Qdrant collections and clear the state DB.
+
+    Prompts "Type RESET to confirm" before proceeding. Does not delete
+    the rotation matrix. Run 'ccmcp setup' to recreate collections
+    before next use.
+    """
     cfg, _, store, _ = _components(ctx.obj["config_path"])
     confirm = click.prompt("Type RESET to confirm")
     if confirm != "RESET":
@@ -357,7 +393,12 @@ def reset(ctx):
 @click.option("--port", default=None, type=int, help="Bind port (default from config)")
 @click.pass_context
 def serve(ctx, host: str | None, port: int | None):
-    """Start the MCP SSE server (for Claude Code and Cursor)."""
+    """Start the MCP SSE server only (no ingestion controller).
+
+    Serves the MCP protocol over SSE at http://HOST:PORT/sse.
+    Prometheus metrics available at http://HOST:PORT/metrics.
+    Use 'start' to run ingestion and the server together.
+    """
     from ccmcp.metrics import make_observable_app, start_collection_poller
     cfg, embedder, store, state = _components(ctx.obj["config_path"])
     h = host or cfg.mcp.host
@@ -373,7 +414,13 @@ def serve(ctx, host: str | None, port: int | None):
 @cli.command()
 @click.pass_context
 def validate(ctx):
-    """Run end-to-end validation scenarios against a temporary Qdrant collection."""
+    """Run end-to-end validation against a live Qdrant instance.
+
+    Indexes sample documents into a temporary collection, runs hybrid
+    searches, and verifies results meet expected relevance thresholds.
+    The temporary collection is cleaned up after the run.
+    Exits 0 if all scenarios pass, 1 otherwise.
+    """
     from ccmcp.validate import run_validation
     cfg, embedder, _, _ = _components(ctx.obj["config_path"])
     console.print("[bold]ccmcp validate[/bold]")
@@ -386,7 +433,12 @@ def validate(ctx):
 @click.option("--port", default=None, type=int)
 @click.pass_context
 def start(ctx, host: str | None, port: int | None):
-    """Start ingestion controller and MCP SSE server together (Docker entrypoint)."""
+    """Start ingestion controller and MCP server together.
+
+    Runs the ingestion controller (watch mode) in a background thread
+    and the MCP SSE server in the foreground. This is the default
+    Docker entrypoint. Use 'serve' if you run ingestion separately.
+    """
     from ccmcp.controller import Controller
     from ccmcp.metrics import make_observable_app, start_collection_poller
     cfg, embedder, store, state = _components(ctx.obj["config_path"])
