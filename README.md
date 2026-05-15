@@ -249,10 +249,41 @@ Drops all Qdrant collections and deletes the state database. Prompts `Type RESET
 
 ## MCP tools
 
-The server exposes two tools to connected AI assistants:
+The server exposes three tools to connected AI assistants:
 
-**`qdrant_find(query, limit=10)`**
-Search the knowledge base. Returns up to `limit` passages ranked by hybrid dense+sparse relevance. The query is automatically scoped to the active project if a [`.ccmcp` marker file](#project-context-scoping-ccmcp) is present.
+**`qdrant_find(query, limit=10, scope=None)`**
+Search the knowledge base. Returns up to `limit` passages ranked by hybrid dense+sparse relevance.
+
+The `scope` parameter controls which projects are searched:
+
+| `scope` value | Behaviour |
+|---|---|
+| omitted / `None` | Automatic — scoped to the active workspace root via MCP roots + `.ccmcp` |
+| `["project-a", "shared-lib"]` | Explicit — search only chunks whose `project_name` or `tags` match any listed value |
+| `["*"]` | Unfiltered — search the full corpus regardless of active project |
+
+**`qdrant_list_scopes()`**
+Returns all project scopes currently in the knowledge base — name, tags, and root path for every project indexed with a `.ccmcp` marker file. Agents call this to discover what scope values are available before passing them to `qdrant_find`.
+
+Example output:
+```
+3 project scope(s) in the knowledge base:
+
+• api-server
+  tags: api-server, backend, go
+  root: /home/user/code/api-server
+
+• shared-proto
+  tags: protobuf, shared-proto
+  root: /home/user/code/shared-proto
+
+• web-frontend
+  tags: react, typescript, web-frontend
+  root: /home/user/code/web-frontend
+
+Use names or tags in qdrant_find: scope=["my-project", "shared-lib"]
+To search everything: scope=["*"]
+```
 
 **`qdrant_store(text, title="", session_id="")`**
 Write a note or artifact into the knowledge base. Useful for Claude to save decisions, summaries, or work-in-progress context. Artifacts expire after `state.artifact_ttl_days` days (default 30).
@@ -261,13 +292,34 @@ Write a note or artifact into the knowledge base. Useful for Claude to save deci
 
 ## Project context scoping (`.ccmcp`)
 
-When you index a single directory containing many projects, `qdrant_find` by default searches the entire corpus. The `.ccmcp` marker file lets each project declare its own context needs.
+When you index a directory containing many projects, `qdrant_find` by default searches the entire corpus. The `.ccmcp` marker file enables two things: it opts a project into indexed scoping, and it declares which other projects' content the agent should include when working in that project.
 
-### How it works
+Scoping works in two complementary modes:
+
+### Automatic scoping (workspace-driven)
 
 1. Place a `.ccmcp` file in a project's root directory.
-2. When ccmcp scans that root, every indexed chunk gets stamped with the project's `source_root` and `tags`.
-3. When an AI assistant opens that project (Claude Code sends its workspace root via MCP), `qdrant_find` automatically filters results to that project's chunks, plus any additional projects declared in `include`.
+2. When ccmcp scans that root, every indexed chunk is stamped with the project's `name`, `source_root`, and `tags`.
+3. When an AI assistant opens that project (Claude Code sends its workspace root via the MCP protocol), `qdrant_find` automatically restricts results to that project's chunks, plus any additional projects declared in `include`.
+
+This requires no action from the agent — it happens transparently based on which directory is open.
+
+### Agent-controlled scoping (explicit)
+
+The agent can also control scope directly, regardless of the active workspace:
+
+```
+# Discover what projects are indexed
+qdrant_list_scopes()
+
+# Search a specific cross-project combination
+qdrant_find("authentication middleware", scope=["api-server", "shared-lib"])
+
+# Search everything — bypass all filtering
+qdrant_find("where is X defined", scope=["*"])
+```
+
+This is useful when the agent is working across multiple projects, debugging an issue that spans repo boundaries, or needs to explicitly search outside the active workspace.
 
 ### File format
 
@@ -275,16 +327,18 @@ Copy `.ccmcp.example` to `.ccmcp` in your project root:
 
 ```yaml
 # .ccmcp
-name: my-backend-api          # human-readable name (defaults to directory name)
+name: my-backend-api          # used as scope identifier (defaults to directory name)
 
 tags:
   - python
   - backend
 
 include:
-  - shared-lib                # include chunks tagged "shared-lib" in search results
+  - shared-lib                # pull in chunks tagged "shared-lib" automatically
   - common-utils
 ```
+
+The `name` and `tags` values both work as scope identifiers in `qdrant_find(scope=[...])` and in other projects' `include` lists.
 
 ### Example multi-project layout
 
@@ -298,7 +352,12 @@ include:
     └── .ccmcp              # name: shared-proto, tags: [shared-proto, protobuf]
 ```
 
-When Claude Code opens `api-server/`, `qdrant_find` returns results from `api-server` **and** `shared-proto` (because `api-server` includes the `shared-proto` tag). Results from `web-frontend` are excluded.
+When Claude Code opens `api-server/`, `qdrant_find` automatically returns results from `api-server` **and** `shared-proto` (via `include`). Results from `web-frontend` are excluded.
+
+The agent can go further and explicitly include `web-frontend` for a cross-project search:
+```
+qdrant_find("CSS variables", scope=["web-frontend", "shared-proto"])
+```
 
 **Fallback:** If no `.ccmcp` file exists in any active root, search is unfiltered (full corpus). Adding `.ccmcp` is always opt-in.
 
