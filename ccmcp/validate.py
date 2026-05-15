@@ -246,8 +246,17 @@ def run_validation(cfg, embedder, console=None) -> tuple[int, int]:
         api_key=cfg.qdrant.api_key,
         artifact_collection=_VALIDATE_ARTIFACTS,
     )
-    store.drop_collections()
-    store.setup(embedder.dim)
+    try:
+        store.drop_collections()
+        store.setup(embedder.dim)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot reach Qdrant at {cfg.qdrant.url}: {exc}\n\n"
+            "If running in Docker, use:\n"
+            "  docker compose exec ccmcp ccmcp validate\n\n"
+            "If running locally, ensure Qdrant is running:\n"
+            "  qdrant  (or)  docker run -p 6333:6333 qdrant/qdrant"
+        ) from None
 
     state_dir = tempfile.mkdtemp(prefix="ccmcp-validate-state-")
     state = StateDB(str(Path(state_dir) / "state.db"))
