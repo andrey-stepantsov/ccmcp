@@ -181,6 +181,23 @@ state:
 
 ---
 
+## Using the CLI with Docker
+
+The Docker container runs `ccmcp start` as its entrypoint (ingestion controller + MCP server together). For any other CLI command, exec into the running container:
+
+```bash
+docker compose exec ccmcp ccmcp status
+docker compose exec ccmcp ccmcp validate
+docker compose exec ccmcp ccmcp ingest /repos/my-project/README.md
+docker compose exec ccmcp ccmcp scan
+```
+
+Inside the container your repos are mounted at `/repos/`, the rotation matrix and state DB are at `/data/`, and Qdrant is reachable at `http://qdrant:6333` — all wired up automatically via environment variables. No config file is needed.
+
+`ccmcp reset` works too; it will prompt `Type RESET to confirm` interactively.
+
+---
+
 ## CLI reference
 
 ```
