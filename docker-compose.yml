@@ -6,7 +6,8 @@ services:
       - qdrant-data:/qdrant/storage
 
   ccmcp:
-    build: .
+    image: ghcr.io/andrey-stepantsov/ccmcp:latest
+    # build: .  # uncomment to build locally instead
     restart: unless-stopped
     depends_on:
       - qdrant
