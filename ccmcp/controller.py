@@ -55,6 +55,7 @@ class Controller:
         self,
         sf: SourceFile,
         source_root: str = "",
+        project_name: str = "",
         tags: list[str] | None = None,
     ):
         h = _content_hash(sf.content)
@@ -81,7 +82,7 @@ class Controller:
         dense, sparse = self._embedder.embed([c.text for c in chunks])
         count = self._store.upsert(
             chunks, dense, sparse, version, stype,
-            source_root=source_root, tags=tags,
+            source_root=source_root, project_name=project_name, tags=tags,
         )
         if count != len(chunks):
             raise RuntimeError(
@@ -117,6 +118,7 @@ class Controller:
             for root in cfg.sources.filesystem.roots:
                 marker = load_marker(root)
                 source_root = marker.source_root if marker else ""
+                project_name = marker.name if marker else ""
                 tags = marker.tags if marker else None
                 files = fs_mod.scan(
                     roots=[root],
@@ -126,7 +128,10 @@ class Controller:
                 log.info("filesystem scan %s: %d files found", root, len(files))
                 for sf in files:
                     try:
-                        self.ingest_file(sf, source_root=source_root, tags=tags)
+                        self.ingest_file(
+                            sf, source_root=source_root,
+                            project_name=project_name, tags=tags,
+                        )
                     except Exception as exc:
                         log.warning("ingest failed %s: %s", sf.source_uri, exc)
                         INGEST_ERRORS.labels(source_type=_source_type_safe(sf.source_uri)).inc()
@@ -203,6 +208,7 @@ class Controller:
                 self.ingest_file(
                     sf,
                     source_root=marker.source_root if marker else "",
+                    project_name=marker.name if marker else "",
                     tags=marker.tags if marker else None,
                 )
             except Exception as exc:

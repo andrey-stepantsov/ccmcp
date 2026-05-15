@@ -87,6 +87,7 @@ class VectorStore:
         version: int,
         source_type: str,
         source_root: str = "",
+        project_name: str = "",
         tags: list[str] | None = None,
     ) -> int:
         if not chunks:
@@ -114,6 +115,7 @@ class VectorStore:
                     "version": version,
                     "ingested_at": now,
                     "source_root": source_root,
+                    "project_name": project_name,
                     "tags": tags or [],
                 },
             ))
@@ -215,6 +217,48 @@ class VectorStore:
             "segments_count": info.segments_count,
             "status": str(info.status),
         }
+
+    def list_scopes(self) -> list[dict]:
+        """Return one entry per distinct source_root that has a project_name stamped.
+
+        Each entry: {"name": str, "source_root": str, "tags": list[str]}
+        Scrolls the collection; fast for typical corpus sizes (< 1M points).
+        """
+        seen: dict[str, dict] = {}  # source_root → aggregated data
+        offset = None
+        while True:
+            points, offset = self._client.scroll(
+                collection_name=self._collection,
+                with_payload=["source_root", "project_name", "tags"],
+                limit=250,
+                offset=offset,
+            )
+            for p in points:
+                if not p.payload:
+                    continue
+                root = p.payload.get("source_root", "")
+                if not root:
+                    continue
+                if root not in seen:
+                    seen[root] = {
+                        "name": p.payload.get("project_name", ""),
+                        "source_root": root,
+                        "tags": set(p.payload.get("tags", [])),
+                    }
+                else:
+                    seen[root]["tags"].update(p.payload.get("tags", []))
+                    if not seen[root]["name"]:
+                        seen[root]["name"] = p.payload.get("project_name", "")
+            if offset is None:
+                break
+        return [
+            {
+                "name": v["name"] or v["source_root"].rstrip("/").split("/")[-1],
+                "source_root": v["source_root"],
+                "tags": sorted(v["tags"]),
+            }
+            for v in seen.values()
+        ]
 
     def artifact_collection_info(self) -> dict:
         info = self._client.get_collection(self._artifact_collection)

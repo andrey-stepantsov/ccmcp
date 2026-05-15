@@ -94,17 +94,46 @@ async def _roots_filter(ctx: Context) -> qdrant_models.Filter | None:
     return qdrant_models.Filter(should=conditions)
 
 
+def _scope_filter(scope: list[str]) -> qdrant_models.Filter:
+    """Build a Qdrant filter that matches chunks by project_name OR tags."""
+    return qdrant_models.Filter(should=[
+        qdrant_models.FieldCondition(
+            key="project_name",
+            match=qdrant_models.MatchAny(any=scope),
+        ),
+        qdrant_models.FieldCondition(
+            key="tags",
+            match=qdrant_models.MatchAny(any=scope),
+        ),
+    ])
+
+
 def _build_mcp(cfg, embedder, store) -> FastMCP:
     mcp = FastMCP("ccmcp", description="Hybrid vector search over your codebase")
 
     @mcp.tool(description=(
         "Search the knowledge base for passages relevant to a query. "
-        "Returns up to `limit` results ranked by hybrid dense+sparse relevance."
+        "Returns up to `limit` results ranked by hybrid dense+sparse relevance. "
+        "Pass `scope` as a list of project names or tags (from qdrant_list_scopes) "
+        "to restrict results to specific projects. "
+        "Omit `scope` to use automatic project scoping based on the active workspace. "
+        'Pass `scope=[\"*\"]` to search the full corpus regardless of active project.'
     ))
-    async def qdrant_find(query: str, limit: int = 10, ctx: Context = None) -> str:
+    async def qdrant_find(
+        query: str,
+        limit: int = 10,
+        scope: list[str] | None = None,
+        ctx: Context = None,
+    ) -> str:
         query = query[:8192]
         limit = max(1, min(limit, cfg.mcp.result_limit))
-        search_filter = await _roots_filter(ctx) if ctx is not None else None
+
+        if scope is not None:
+            # Explicit scope overrides automatic root-based filtering.
+            search_filter = None if (not scope or scope == ["*"]) else _scope_filter(scope)
+        else:
+            search_filter = await _roots_filter(ctx) if ctx is not None else None
+
         dense, sparse_list = embedder.embed([query])
         results = store.search(dense[0], sparse_list[0], limit=limit, filter=search_filter)
         if not results:
@@ -117,6 +146,32 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
             header = f"[{i}] {src}" + (f" § {section}" if section else "")
             parts.append(f"{header}\n\n{text}")
         return "\n\n---\n\n".join(parts)
+
+    @mcp.tool(description=(
+        "List all project scopes available in the knowledge base. "
+        "Returns project names, tags, and root paths for every project "
+        "that was indexed with a .ccmcp marker file. "
+        "Use the names or tags returned here in the `scope` parameter of qdrant_find."
+    ))
+    def qdrant_list_scopes() -> str:
+        scopes = store.list_scopes()
+        if not scopes:
+            return (
+                "No project scopes found. "
+                "Add a .ccmcp file to a project root and re-index to enable scoping."
+            )
+        lines = [f"{len(scopes)} project scope(s) in the knowledge base:\n"]
+        for s in scopes:
+            tags = ", ".join(s["tags"]) if s["tags"] else "(none)"
+            lines.append(f"• {s['name']}")
+            lines.append(f"  tags: {tags}")
+            lines.append(f"  root: {s['source_root']}")
+            lines.append("")
+        lines.append(
+            'Use names or tags in qdrant_find: scope=["my-project", "shared-lib"]'
+        )
+        lines.append('To search everything: scope=["*"]')
+        return "\n".join(lines)
 
     @mcp.tool(description=(
         "Store a note or artifact in the knowledge base so it can be retrieved later."
