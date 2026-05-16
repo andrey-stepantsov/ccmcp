@@ -18,9 +18,9 @@ extraction:
 sources:
   filesystem:
     enabled: true
-    # roots: overridden by CCMCP_SOURCE_PATH env var when running in Docker.
+    # paths: overridden by CCMCP_SOURCE_PATH env var when running in Docker.
     # Set here for local dev without Docker:
-    roots: []
+    paths: []
       # - "/home/user/code"
     watch: true
     poll_interval: 30  # seconds between filesystem polls (used in Docker)

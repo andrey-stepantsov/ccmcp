@@ -21,10 +21,10 @@ def test_defaults_when_no_file(tmp_path, monkeypatch):
     assert cfg.mcp.port == 7700
 
 
-def test_source_path_absent_leaves_roots_empty(tmp_path, monkeypatch):
+def test_source_path_absent_leaves_paths_empty(tmp_path, monkeypatch):
     monkeypatch.delenv("CCMCP_SOURCE_PATH", raising=False)
     cfg = load_config(str(tmp_path / "nonexistent.yaml"))
-    assert cfg.sources.filesystem.roots == []
+    assert cfg.sources.filesystem.paths == []
 
 
 def test_file_overrides_defaults(tmp_path):
@@ -45,20 +45,20 @@ def test_env_overrides_file(tmp_path, monkeypatch):
     assert cfg.qdrant.url == "http://env:6333"
 
 
-def test_source_path_env_sets_root(tmp_path, monkeypatch):
+def test_source_path_env_sets_path(tmp_path, monkeypatch):
     monkeypatch.setenv("CCMCP_SOURCE_PATH", "/repos")
     cfg = load_config(str(tmp_path / "nonexistent.yaml"))
-    assert cfg.sources.filesystem.roots == ["/repos"]
+    assert cfg.sources.filesystem.paths == ["/repos"]
     assert cfg.sources.filesystem.enabled is True
 
 
-def test_source_path_not_overridden_when_roots_set(tmp_path, monkeypatch):
+def test_source_path_not_overridden_when_paths_set(tmp_path, monkeypatch):
     monkeypatch.setenv("CCMCP_SOURCE_PATH", "/repos")
     path = _write_config(tmp_path, {
-        "sources": {"filesystem": {"roots": ["/custom"], "enabled": True}}
+        "sources": {"filesystem": {"paths": ["/custom"], "enabled": True}}
     })
     cfg = load_config(path)
-    assert cfg.sources.filesystem.roots == ["/custom"]
+    assert cfg.sources.filesystem.paths == ["/custom"]
 
 
 def test_filesystem_extensions_loaded(tmp_path):

@@ -211,7 +211,7 @@ def cli(ctx, config):
 
 @cli.command()
 @click.pass_context
-def setup(ctx):
+def init(ctx):
     """Initialize Qdrant collections and generate rotation matrix.
 
     Creates the Qdrant collection with hybrid dense+sparse vectors and
@@ -397,7 +397,7 @@ def serve(ctx, host: str | None, port: int | None):
 
     Serves the MCP protocol over SSE at http://HOST:PORT/sse.
     Prometheus metrics available at http://HOST:PORT/metrics.
-    Use 'start' to run ingestion and the server together.
+    Use 'run' to start ingestion and the server together.
     """
     from ccmcp.metrics import make_observable_app, start_collection_poller
     cfg, embedder, store, state = _components(ctx.obj["config_path"])
@@ -413,7 +413,7 @@ def serve(ctx, host: str | None, port: int | None):
 
 @cli.command()
 @click.pass_context
-def validate(ctx):
+def doctor(ctx):
     """Run end-to-end validation against a live Qdrant instance.
 
     Indexes sample documents into a temporary collection, runs hybrid
@@ -432,12 +432,12 @@ def validate(ctx):
 @click.option("--host", default=None)
 @click.option("--port", default=None, type=int)
 @click.pass_context
-def start(ctx, host: str | None, port: int | None):
+def run(ctx, host: str | None, port: int | None):
     """Start ingestion controller and MCP server together.
 
     Runs the ingestion controller (watch mode) in a background thread
     and the MCP SSE server in the foreground. This is the default
-    Docker entrypoint. Use 'serve' if you run ingestion separately.
+    Docker entrypoint — use 'serve' if you manage ingestion separately.
     """
     from ccmcp.controller import Controller
     from ccmcp.metrics import make_observable_app, start_collection_poller

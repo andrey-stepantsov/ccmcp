@@ -121,7 +121,7 @@ embedding.dense_model
   HuggingFace model identifier for dense embeddings.
   Default: BAAI/bge-small-en-v1.5
 
-sources.filesystem.roots
+sources.filesystem.paths
   List of directory paths to scan and watch for document changes.
 
 sources.filesystem.watch
@@ -253,7 +253,7 @@ def run_validation(cfg, embedder, console=None) -> tuple[int, int]:
         raise SystemExit(
             f"Cannot reach Qdrant at {cfg.qdrant.url}: {exc}\n\n"
             "If running in Docker, use:\n"
-            "  docker compose exec ccmcp ccmcp validate\n\n"
+            "  docker compose exec ccmcp ccmcp doctor\n\n"
             "If running locally, ensure Qdrant is running:\n"
             "  qdrant  (or)  docker run -p 6333:6333 qdrant/qdrant"
         ) from None

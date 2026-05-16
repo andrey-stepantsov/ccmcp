@@ -43,7 +43,7 @@ class EmbeddingConfig:
 @dataclass
 class FilesystemConfig:
     enabled: bool = True
-    roots: list[str] = field(default_factory=list)
+    paths: list[str] = field(default_factory=list)
     watch: bool = True
     extensions: list[str] = field(default_factory=lambda: [
         ".md", ".rst", ".txt", ".py", ".go", ".rs", ".js", ".ts",
@@ -157,7 +157,7 @@ def load_config(path: str | None = None) -> Config:
         if fs := s.get("filesystem"):
             cfg.sources.filesystem = FilesystemConfig(
                 enabled=fs.get("enabled", True),
-                roots=[str(Path(r).expanduser()) for r in fs.get("roots", [])],
+                paths=[str(Path(r).expanduser()) for r in fs.get("paths", fs.get("roots", []))],
                 watch=fs.get("watch", True),
                 extensions=fs.get("extensions", cfg.sources.filesystem.extensions),
                 ignore=fs.get("ignore", cfg.sources.filesystem.ignore),
@@ -182,8 +182,8 @@ def load_config(path: str | None = None) -> Config:
 
     # CCMCP_SOURCE_PATH overrides filesystem roots (Docker use case)
     source_path = os.environ.get("CCMCP_SOURCE_PATH")
-    if source_path and not cfg.sources.filesystem.roots:
-        cfg.sources.filesystem.roots = [source_path]
+    if source_path and not cfg.sources.filesystem.paths:
+        cfg.sources.filesystem.paths = [source_path]
         cfg.sources.filesystem.enabled = True
 
     if st := raw.get("state"):

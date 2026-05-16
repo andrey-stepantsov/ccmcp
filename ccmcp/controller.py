@@ -111,11 +111,11 @@ class Controller:
         scan_start = _now()
         cfg = self._cfg
 
-        if cfg.sources.filesystem.enabled and cfg.sources.filesystem.roots:
+        if cfg.sources.filesystem.enabled and cfg.sources.filesystem.paths:
             from ccmcp.marker import load as load_marker
             from ccmcp.sources import filesystem as fs_mod
 
-            for root in cfg.sources.filesystem.roots:
+            for root in cfg.sources.filesystem.paths:
                 marker = load_marker(root)
                 source_root = marker.source_root if marker else ""
                 project_name = marker.name if marker else ""
@@ -177,7 +177,7 @@ class Controller:
     def watch(self):
         self.scan()
 
-        if not (self._cfg.sources.filesystem.enabled and self._cfg.sources.filesystem.roots):
+        if not (self._cfg.sources.filesystem.enabled and self._cfg.sources.filesystem.paths):
             return
 
         from ccmcp.marker import load as load_marker
@@ -187,7 +187,7 @@ class Controller:
 
         # Build a prefix→marker mapping so per-file events carry the right metadata.
         root_markers = {}
-        for root in fscfg.roots:
+        for root in fscfg.paths:
             import os
             abs_root = os.path.realpath(root)
             marker = load_marker(root)
@@ -215,7 +215,7 @@ class Controller:
                 log.warning("watch callback failed %s: %s", sf.source_uri, exc)
 
         observer = fs_mod.watch(
-            roots=fscfg.roots,
+            roots=fscfg.paths,
             extensions=fscfg.extensions,
             ignore=fscfg.ignore,
             callback=on_change,

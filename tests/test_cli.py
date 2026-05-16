@@ -52,12 +52,12 @@ def test_root_help(runner):
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "Commands:" in result.output
-    for cmd in ("setup", "scan", "watch", "ingest", "status", "reset", "serve", "validate", "start"):
+    for cmd in ("init", "scan", "watch", "ingest", "status", "reset", "serve", "doctor", "run"):
         assert cmd in result.output
 
 
 @pytest.mark.parametrize("cmd", [
-    "setup", "scan", "watch", "ingest", "status", "reset", "serve", "validate", "start",
+    "init", "scan", "watch", "ingest", "status", "reset", "serve", "doctor", "run",
 ])
 def test_command_help(runner, cmd):
     result = runner.invoke(cli, [cmd, "--help"])
@@ -79,26 +79,26 @@ def test_no_truncated_descriptions(runner):
 # setup command
 # ---------------------------------------------------------------------------
 
-def test_setup_calls_embedder_and_store(runner, mock_components):
+def test_init_calls_embedder_and_store(runner, mock_components):
     cfg, embedder, store, _ = mock_components
-    result = runner.invoke(cli, ["setup"])
+    result = runner.invoke(cli, ["init"])
     assert result.exit_code == 0
     embedder.setup.assert_called_once()
     store.setup.assert_called_once_with(embedder.dim)
 
 
-def test_setup_tolerates_existing_rotation_matrix(runner, mock_components):
+def test_init_tolerates_existing_rotation_matrix(runner, mock_components):
     _, embedder, _, _ = mock_components
     embedder.setup.side_effect = FileExistsError("rotation_matrix.npy already exists")
-    result = runner.invoke(cli, ["setup"])
+    result = runner.invoke(cli, ["init"])
     assert result.exit_code == 0
     assert "rotation_matrix.npy already exists" in result.output
 
 
-def test_setup_qdrant_unreachable_shows_error(runner, mock_components):
+def test_init_qdrant_unreachable_shows_error(runner, mock_components):
     _, _, store, _ = mock_components
     store.setup.side_effect = Exception("Connection refused")
-    result = runner.invoke(cli, ["setup"])
+    result = runner.invoke(cli, ["init"])
     assert result.exit_code != 0
 
 
@@ -172,11 +172,11 @@ def test_ingest_missing_file(runner, mock_components):
 # validate: unreachable Qdrant produces a clean error message
 # ---------------------------------------------------------------------------
 
-def test_validate_unreachable_qdrant_clean_error(runner, mock_components):
+def test_doctor_unreachable_qdrant_clean_error(runner, mock_components):
     from ccmcp.store import VectorStore
 
     with patch.object(VectorStore, "drop_collections", side_effect=Exception("name resolution")):
-        result = runner.invoke(cli, ["validate"])
+        result = runner.invoke(cli, ["doctor"])
 
     assert result.exit_code != 0
     output = result.output + (str(result.exception) if result.exception else "")
