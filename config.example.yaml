@@ -19,9 +19,14 @@ sources:
   filesystem:
     enabled: true
     # paths: overridden by CCMCP_SOURCE_PATH env var when running in Docker.
-    # Set here for local dev without Docker:
+    # Set here for local dev without Docker.
+    # Plain string or object with optional scope metadata:
     paths: []
-      # - "/home/user/code"
+      # - /home/user/code                 # plain path, name defaults to directory name
+      # - path: /home/user/api-server     # with scope metadata
+      #   name: api-server
+      #   tags: [go, backend]
+      #   include: [shared-lib]           # pull in chunks tagged shared-lib at query time
     watch: true
     poll_interval: 30  # seconds between filesystem polls (used in Docker)
     extensions:

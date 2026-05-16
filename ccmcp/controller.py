@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import time
+from pathlib import Path
 
 from ccmcp.chunker import chunk_file
-from ccmcp.config import Config
+from ccmcp.config import Config, SourcePath
 from ccmcp.embedder import Embedder
 from ccmcp.metrics import (
     CHUNK_CHARS,
@@ -42,6 +44,10 @@ def _source_type_safe(uri: str) -> str:
         return _source_type(uri)
     except ValueError:
         return "unknown"
+
+
+def _resolved(path: str) -> str:
+    return os.path.realpath(str(Path(path).expanduser()))
 
 
 class Controller:
@@ -112,20 +118,18 @@ class Controller:
         cfg = self._cfg
 
         if cfg.sources.filesystem.enabled and cfg.sources.filesystem.paths:
-            from ccmcp.marker import load as load_marker
             from ccmcp.sources import filesystem as fs_mod
 
-            for root in cfg.sources.filesystem.paths:
-                marker = load_marker(root)
-                source_root = marker.source_root if marker else ""
-                project_name = marker.name if marker else ""
-                tags = marker.tags if marker else None
+            for sp in cfg.sources.filesystem.paths:
+                source_root = _resolved(sp.path)
+                project_name = sp.name or Path(sp.path).name
+                tags = sp.tags or None
                 files = fs_mod.scan(
-                    roots=[root],
+                    roots=[sp.path],
                     extensions=cfg.sources.filesystem.extensions,
                     ignore=cfg.sources.filesystem.ignore,
                 )
-                log.info("filesystem scan %s: %d files found", root, len(files))
+                log.info("filesystem scan %s: %d files found", sp.path, len(files))
                 for sf in files:
                     try:
                         self.ingest_file(
@@ -180,42 +184,37 @@ class Controller:
         if not (self._cfg.sources.filesystem.enabled and self._cfg.sources.filesystem.paths):
             return
 
-        from ccmcp.marker import load as load_marker
         from ccmcp.sources import filesystem as fs_mod
 
         fscfg = self._cfg.sources.filesystem
 
-        # Build a prefix→marker mapping so per-file events carry the right metadata.
-        root_markers = {}
-        for root in fscfg.paths:
-            import os
-            abs_root = os.path.realpath(root)
-            marker = load_marker(root)
-            root_markers[abs_root] = marker
+        # Build resolved path → SourcePath index for per-file event lookup.
+        path_index: dict[str, SourcePath] = {
+            _resolved(sp.path): sp for sp in fscfg.paths
+        }
 
-        def _marker_for_path(path: str):
-            import os
-            abs_path = os.path.realpath(path)
-            for abs_root, marker in root_markers.items():
+        def _sp_for_path(file_path: str) -> SourcePath | None:
+            abs_path = os.path.realpath(file_path)
+            for abs_root, sp in path_index.items():
                 if abs_path.startswith(abs_root + os.sep) or abs_path == abs_root:
-                    return marker
+                    return sp
             return None
 
         def on_change(sf: SourceFile):
             try:
                 file_path = sf.source_uri.removeprefix("file://")
-                marker = _marker_for_path(file_path)
+                sp = _sp_for_path(file_path)
                 self.ingest_file(
                     sf,
-                    source_root=marker.source_root if marker else "",
-                    project_name=marker.name if marker else "",
-                    tags=marker.tags if marker else None,
+                    source_root=_resolved(sp.path) if sp else "",
+                    project_name=(sp.name or Path(sp.path).name) if sp else "",
+                    tags=sp.tags or None if sp else None,
                 )
             except Exception as exc:
                 log.warning("watch callback failed %s: %s", sf.source_uri, exc)
 
         observer = fs_mod.watch(
-            roots=fscfg.paths,
+            roots=[sp.path for sp in fscfg.paths],
             extensions=fscfg.extensions,
             ignore=fscfg.ignore,
             callback=on_change,

@@ -41,9 +41,17 @@ class EmbeddingConfig:
 
 
 @dataclass
+class SourcePath:
+    path: str
+    name: str = ""
+    tags: list[str] = field(default_factory=list)
+    include: list[str] = field(default_factory=list)
+
+
+@dataclass
 class FilesystemConfig:
     enabled: bool = True
-    paths: list[str] = field(default_factory=list)
+    paths: list[SourcePath] = field(default_factory=list)
     watch: bool = True
     extensions: list[str] = field(default_factory=lambda: [
         ".md", ".rst", ".txt", ".py", ".go", ".rs", ".js", ".ts",
@@ -110,6 +118,22 @@ class Config:
     mcp: McpConfig = field(default_factory=McpConfig)
 
 
+def _parse_source_paths(raw: list) -> list[SourcePath]:
+    """Parse path entries that are either plain strings or dicts with metadata."""
+    result = []
+    for entry in raw:
+        if isinstance(entry, str):
+            result.append(SourcePath(path=str(Path(entry).expanduser())))
+        elif isinstance(entry, dict):
+            result.append(SourcePath(
+                path=str(Path(entry["path"]).expanduser()),
+                name=str(entry.get("name", "")),
+                tags=[str(t) for t in entry.get("tags", [])],
+                include=[str(t) for t in entry.get("include", [])],
+            ))
+    return result
+
+
 def load_config(path: str | None = None) -> Config:
     path = path or os.environ.get("CCMCP_CONFIG", "config.yaml")
     raw: dict = {}
@@ -157,7 +181,7 @@ def load_config(path: str | None = None) -> Config:
         if fs := s.get("filesystem"):
             cfg.sources.filesystem = FilesystemConfig(
                 enabled=fs.get("enabled", True),
-                paths=[str(Path(r).expanduser()) for r in fs.get("paths", fs.get("roots", []))],
+                paths=_parse_source_paths(fs.get("paths", fs.get("roots", []))),
                 watch=fs.get("watch", True),
                 extensions=fs.get("extensions", cfg.sources.filesystem.extensions),
                 ignore=fs.get("ignore", cfg.sources.filesystem.ignore),
@@ -180,10 +204,10 @@ def load_config(path: str | None = None) -> Config:
                 poll_interval_min=dr.get("poll_interval_min", 15),
             )
 
-    # CCMCP_SOURCE_PATH overrides filesystem roots (Docker use case)
+    # CCMCP_SOURCE_PATH overrides filesystem paths (Docker use case)
     source_path = os.environ.get("CCMCP_SOURCE_PATH")
     if source_path and not cfg.sources.filesystem.paths:
-        cfg.sources.filesystem.paths = [source_path]
+        cfg.sources.filesystem.paths = [SourcePath(path=source_path)]
         cfg.sources.filesystem.enabled = True
 
     if st := raw.get("state"):

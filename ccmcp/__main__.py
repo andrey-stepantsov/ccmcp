@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ccmcp.config import load_config
+from ccmcp.controller import _resolved
 from ccmcp.embedder import Embedder
 from ccmcp.state import StateDB
 from ccmcp.store import VectorStore
@@ -37,17 +38,17 @@ def _components(config_path: str | None):
     return cfg, embedder, store, state
 
 
-async def _roots_filter(ctx: Context) -> qdrant_models.Filter | None:
+def _build_path_index(cfg) -> dict[str, object]:
+    """Build a resolved-path → SourcePath index from config for MCP root resolution."""
+    return {_resolved(sp.path): sp for sp in cfg.sources.filesystem.paths}
+
+
+async def _roots_filter(ctx: Context, path_index: dict) -> qdrant_models.Filter | None:
     """Build a Qdrant filter scoped to the session's MCP roots.
 
-    Returns None (unfiltered) when:
-    - the client didn't send roots, or
-    - no active root contains a .ccmcp marker file.
+    Resolves incoming MCP root URIs against the config path index.
+    Returns None (unfiltered) when no active root matches a configured source.
     """
-    from pathlib import Path as _Path
-
-    from ccmcp.marker import load as load_marker
-
     try:
         result = await ctx.request_context.session.list_roots()
         roots = result.roots
@@ -62,22 +63,20 @@ async def _roots_filter(ctx: Context) -> qdrant_models.Filter | None:
 
     for root in roots:
         raw_uri = str(root.uri)
-        # Root URIs are always file:// per the MCP spec
         path = raw_uri.removeprefix("file://")
         try:
-            resolved = str(_Path(path).resolve())
+            resolved = str(Path(path).resolve())
         except Exception:
             resolved = path
 
-        marker = load_marker(resolved)
-        if marker:
-            root_paths.append(marker.source_root)
-            include_tags.extend(marker.include)
+        sp = path_index.get(resolved)
+        if sp:
+            root_paths.append(resolved)
+            include_tags.extend(sp.include)
 
     if not root_paths:
-        return None  # no .ccmcp files → unscoped search
+        return None  # no configured source matches → unscoped search
 
-    # Match any chunk from an active root, OR carrying an included tag.
     conditions: list[qdrant_models.Condition] = [
         qdrant_models.FieldCondition(
             key="source_root",
@@ -110,6 +109,7 @@ def _scope_filter(scope: list[str]) -> qdrant_models.Filter:
 
 def _build_mcp(cfg, embedder, store) -> FastMCP:
     mcp = FastMCP("ccmcp", description="Hybrid vector search over your codebase")
+    path_index = _build_path_index(cfg)
 
     @mcp.tool(description=(
         "Search the knowledge base for passages relevant to a query. "
@@ -132,7 +132,7 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
             # Explicit scope overrides automatic root-based filtering.
             search_filter = None if (not scope or scope == ["*"]) else _scope_filter(scope)
         else:
-            search_filter = await _roots_filter(ctx) if ctx is not None else None
+            search_filter = await _roots_filter(ctx, path_index) if ctx is not None else None
 
         dense, sparse_list = embedder.embed([query])
         results = store.search(dense[0], sparse_list[0], limit=limit, filter=search_filter)

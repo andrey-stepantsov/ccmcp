@@ -48,7 +48,8 @@ def test_env_overrides_file(tmp_path, monkeypatch):
 def test_source_path_env_sets_path(tmp_path, monkeypatch):
     monkeypatch.setenv("CCMCP_SOURCE_PATH", "/repos")
     cfg = load_config(str(tmp_path / "nonexistent.yaml"))
-    assert cfg.sources.filesystem.paths == ["/repos"]
+    assert len(cfg.sources.filesystem.paths) == 1
+    assert cfg.sources.filesystem.paths[0].path == "/repos"
     assert cfg.sources.filesystem.enabled is True
 
 
@@ -58,7 +59,39 @@ def test_source_path_not_overridden_when_paths_set(tmp_path, monkeypatch):
         "sources": {"filesystem": {"paths": ["/custom"], "enabled": True}}
     })
     cfg = load_config(path)
-    assert cfg.sources.filesystem.paths == ["/custom"]
+    assert cfg.sources.filesystem.paths[0].path == "/custom"
+
+
+def test_paths_plain_string(tmp_path):
+    path = _write_config(tmp_path, {
+        "sources": {"filesystem": {"paths": ["/code/myproject"]}}
+    })
+    cfg = load_config(path)
+    sp = cfg.sources.filesystem.paths[0]
+    assert sp.path == "/code/myproject"
+    assert sp.name == ""
+    assert sp.tags == []
+
+
+def test_paths_object_with_metadata(tmp_path):
+    path = _write_config(tmp_path, {
+        "sources": {"filesystem": {"paths": [
+            {"path": "/code/api", "name": "api-server", "tags": ["go", "backend"]}
+        ]}}
+    })
+    cfg = load_config(path)
+    sp = cfg.sources.filesystem.paths[0]
+    assert sp.path == "/code/api"
+    assert sp.name == "api-server"
+    assert sp.tags == ["go", "backend"]
+
+
+def test_paths_backwards_compat_roots_key(tmp_path):
+    path = _write_config(tmp_path, {
+        "sources": {"filesystem": {"roots": ["/code/legacy"]}}
+    })
+    cfg = load_config(path)
+    assert cfg.sources.filesystem.paths[0].path == "/code/legacy"
 
 
 def test_filesystem_extensions_loaded(tmp_path):
