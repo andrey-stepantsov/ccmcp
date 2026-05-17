@@ -3,6 +3,9 @@
   "defaultMode": "bypassPermissions",
   "skipDangerousModePermissionPrompt": true,
   "permissions": {
+    "allow": [
+      "Bash(*)"
+    ],
     "deny": [
       "Bash(rm -rf /*)",
       "Bash(rm -rf ~*)",
