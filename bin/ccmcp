@@ -1,0 +1,32 @@
+#!/bin/bash
+# ccmcp wrapper — delegates commands to the running ccmcp Docker container.
+#
+# Install:
+#   sudo cp bin/ccmcp /usr/local/bin/ccmcp && sudo chmod +x /usr/local/bin/ccmcp
+#
+# Set CCMCP_DIR to the directory containing docker-compose.yml.
+# Add to ~/.bashrc or ~/.zshrc:
+#   export CCMCP_DIR=~/code/ccmcp
+
+set -e
+
+CCMCP_DIR="${CCMCP_DIR:-$(pwd)}"
+COMPOSE_FILE="$CCMCP_DIR/docker-compose.yml"
+
+if [ ! -f "$COMPOSE_FILE" ]; then
+    echo "ccmcp: docker-compose.yml not found at $CCMCP_DIR" >&2
+    echo "" >&2
+    echo "Set CCMCP_DIR to the directory containing docker-compose.yml:" >&2
+    echo "  export CCMCP_DIR=~/code/ccmcp" >&2
+    exit 1
+fi
+
+if ! docker compose -f "$COMPOSE_FILE" ps ccmcp --quiet 2>/dev/null | grep -q .; then
+    echo "ccmcp: container is not running." >&2
+    echo "" >&2
+    echo "Start the stack first:" >&2
+    echo "  docker compose -f $COMPOSE_FILE up -d" >&2
+    exit 1
+fi
+
+exec docker compose -f "$COMPOSE_FILE" exec ccmcp ccmcp "$@"
