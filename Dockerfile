@@ -30,7 +30,8 @@ VOLUME ["/data", "/repos"]
 EXPOSE 7700
 
 ENV QDRANT_URL=http://qdrant:6333 \
-    CCMCP_SOURCE_PATH=/repos
+    CCMCP_SOURCE_PATH=/repos \
+    CCMCP_CONFIG=/data/config.yaml
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

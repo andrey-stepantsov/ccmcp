@@ -13,7 +13,7 @@ from qdrant_client import models as qdrant_models
 from rich.console import Console
 from rich.table import Table
 
-from ccmcp.config import load_config
+from ccmcp.config import config_to_dict, load_config
 from ccmcp.controller import _resolved
 from ccmcp.embedder import Embedder
 from ccmcp.state import StateDB
@@ -426,6 +426,165 @@ def doctor(ctx):
     console.print("[bold]ccmcp validate[/bold]")
     passed, total = run_validation(cfg, embedder, console=console)
     raise SystemExit(0 if passed == total else 1)
+
+
+@cli.command("save-config")
+@click.option("--output", "-o", default="-", help="Output file path (default: stdout)")
+@click.pass_context
+def save_config(ctx, output: str):
+    """Export the current resolved config to a YAML file.
+
+    Merges config file, environment variables, and defaults into a single
+    portable YAML file. Use with load-config to restore on a new deployment.
+
+    \b
+    Examples:
+      ccmcp save-config                        # print to stdout
+      ccmcp save-config -o backup.yaml         # write to file
+      docker compose exec ccmcp ccmcp save-config -o /data/config-backup.yaml
+    """
+    import yaml as _yaml
+
+    cfg = load_config(ctx.obj["config_path"])
+    data = config_to_dict(cfg)
+    text = _yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    if output == "-":
+        console.print(text, highlight=False, markup=False)
+    else:
+        Path(output).write_text(text, encoding="utf-8")
+        console.print(f"[green]Config saved to:[/green] {output}")
+
+
+@cli.command("load-config")
+@click.argument("input_file")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.pass_context
+def load_config_cmd(ctx, input_file: str, yes: bool):
+    """Load a config file and write it to the active config path.
+
+    Validates the config, then writes it to the path that ccmcp reads on
+    startup (CCMCP_CONFIG env var, or config.yaml in the working directory).
+    After loading, run 'ccmcp init' and 'ccmcp scan' to rebuild the dataset.
+
+    \b
+    Examples:
+      ccmcp load-config backup.yaml
+      docker compose exec ccmcp ccmcp load-config /data/config-backup.yaml
+    """
+    import yaml as _yaml
+
+    src = Path(input_file)
+    if not src.exists():
+        raise click.ClickException(f"File not found: {input_file}")
+
+    # Validate by loading it
+    try:
+        candidate = load_config(str(src))
+    except Exception as exc:
+        raise click.ClickException(f"Invalid config: {exc}") from None
+
+    import os
+    dest = Path(os.environ.get("CCMCP_CONFIG", "config.yaml"))
+
+    if not yes:
+        click.echo(f"Write config to: {dest}")
+        click.echo(f"  sources: {len(candidate.sources.filesystem.paths)} filesystem path(s)")
+        click.echo(f"  qdrant:  {candidate.qdrant.url} / {candidate.qdrant.collection}")
+        click.confirm("Proceed?", abort=True)
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    console.print(f"[green]Config loaded to:[/green] {dest}")
+    console.print("Run [bold]ccmcp init[/bold] then [bold]ccmcp scan[/bold] to rebuild the dataset.")
+
+
+@cli.command("save-snapshot")
+@click.option("--output", "-o", default="ccmcp-snapshot.tar.gz",
+              help="Output archive path (default: ccmcp-snapshot.tar.gz)")
+@click.pass_context
+def save_snapshot(ctx, output: str):
+    """Save rotation matrix and state DB to a portable archive.
+
+    The snapshot lets you redeploy without a full re-index: restore it
+    with load-snapshot, run 'ccmcp init', then 'ccmcp scan' — unchanged
+    files are skipped thanks to the restored state DB.
+
+    \b
+    Examples:
+      ccmcp save-snapshot -o /tmp/ccmcp-snapshot.tar.gz
+      docker compose exec ccmcp ccmcp save-snapshot -o /data/snapshot.tar.gz
+    """
+    import tarfile
+
+    cfg = load_config(ctx.obj["config_path"])
+    rot = Path(cfg.embedding.rotation_matrix)
+    db = Path(cfg.state.db_path)
+
+    missing = [str(p) for p in (rot, db) if not p.exists()]
+    if missing:
+        raise click.ClickException(f"Cannot snapshot — missing files: {', '.join(missing)}")
+
+    with tarfile.open(output, "w:gz") as tar:
+        tar.add(rot, arcname="rotation_matrix.npy")
+        tar.add(db, arcname="state.db")
+
+    console.print(f"[green]Snapshot saved to:[/green] {output}")
+    console.print(f"  rotation_matrix.npy  ({rot.stat().st_size // 1024} KB)")
+    console.print(f"  state.db             ({db.stat().st_size // 1024} KB)")
+
+
+@cli.command("load-snapshot")
+@click.argument("archive")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.pass_context
+def load_snapshot(ctx, archive: str, yes: bool):
+    """Restore rotation matrix and state DB from a snapshot archive.
+
+    After loading, run 'ccmcp init' then 'ccmcp scan' to rebuild the
+    Qdrant index. Unchanged files will be skipped automatically.
+
+    \b
+    Examples:
+      ccmcp load-snapshot ccmcp-snapshot.tar.gz
+      docker compose exec ccmcp ccmcp load-snapshot /data/snapshot.tar.gz
+    """
+    import tarfile
+
+    src = Path(archive)
+    if not src.exists():
+        raise click.ClickException(f"File not found: {archive}")
+
+    cfg = load_config(ctx.obj["config_path"])
+    rot_dest = Path(cfg.embedding.rotation_matrix)
+    db_dest = Path(cfg.state.db_path)
+
+    with tarfile.open(src, "r:gz") as tar:
+        members = {m.name for m in tar.getmembers()}
+        if "rotation_matrix.npy" not in members or "state.db" not in members:
+            raise click.ClickException("Archive is missing rotation_matrix.npy or state.db")
+
+        if not yes:
+            click.echo(f"Restore to:")
+            click.echo(f"  rotation_matrix → {rot_dest}")
+            click.echo(f"  state.db        → {db_dest}")
+            if rot_dest.exists():
+                click.echo("[warning] rotation_matrix.npy already exists and will be overwritten")
+            click.confirm("Proceed?", abort=True)
+
+        rot_dest.parent.mkdir(parents=True, exist_ok=True)
+        db_dest.parent.mkdir(parents=True, exist_ok=True)
+
+        member = tar.getmember("rotation_matrix.npy")
+        member.name = rot_dest.name
+        tar.extract(member, path=rot_dest.parent, filter="data")
+
+        member = tar.getmember("state.db")
+        member.name = db_dest.name
+        tar.extract(member, path=db_dest.parent, filter="data")
+
+    console.print(f"[green]Snapshot restored.[/green]")
+    console.print("Run [bold]ccmcp init[/bold] then [bold]ccmcp scan[/bold] to rebuild the index.")
 
 
 @cli.command()

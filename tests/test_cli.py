@@ -172,6 +172,114 @@ def test_ingest_missing_file(runner, mock_components):
 # validate: unreachable Qdrant produces a clean error message
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# save-config / load-config
+# ---------------------------------------------------------------------------
+
+def test_save_config_prints_yaml(runner, mock_components):
+    result = runner.invoke(cli, ["save-config"])
+    assert result.exit_code == 0
+    assert "qdrant" in result.output
+    assert "sources" in result.output
+
+
+def test_save_config_writes_file(runner, mock_components, tmp_path):
+    out = tmp_path / "out.yaml"
+    result = runner.invoke(cli, ["save-config", "-o", str(out)])
+    assert result.exit_code == 0
+    assert out.exists()
+    assert "qdrant" in out.read_text()
+
+
+def test_load_config_validates_and_writes(runner, mock_components, tmp_path):
+    import yaml
+    src = tmp_path / "backup.yaml"
+    src.write_text(yaml.dump({"qdrant": {"url": "http://localhost:6333"}}))
+    dest = tmp_path / "config.yaml"
+
+    import os
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            cli, ["load-config", str(src), "--yes"],
+            env={"CCMCP_CONFIG": str(dest)},
+        )
+    assert result.exit_code == 0
+    assert dest.exists()
+
+
+def test_load_config_rejects_missing_file(runner, mock_components):
+    result = runner.invoke(cli, ["load-config", "/nonexistent/backup.yaml", "--yes"])
+    assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# save-snapshot / load-snapshot
+# ---------------------------------------------------------------------------
+
+def _snapshot_cfg(tmp_path, rot_path=None, db_path=None):
+    """Return a minimal MagicMock config pointing at tmp_path files."""
+    cfg = MagicMock()
+    cfg.embedding.rotation_matrix = str(rot_path or tmp_path / "rotation_matrix.npy")
+    cfg.state.db_path = str(db_path or tmp_path / "state.db")
+    return cfg
+
+
+def test_save_snapshot_creates_archive(runner, tmp_path):
+    rot = tmp_path / "rotation_matrix.npy"
+    db = tmp_path / "state.db"
+    rot.write_bytes(b"fake rotation matrix data")
+    db.write_bytes(b"fake sqlite data")
+    cfg = _snapshot_cfg(tmp_path, rot, db)
+
+    out = tmp_path / "snap.tar.gz"
+    with patch("ccmcp.__main__.load_config", return_value=cfg):
+        result = runner.invoke(cli, ["save-snapshot", "-o", str(out)])
+    assert result.exit_code == 0
+    assert out.exists()
+
+    import tarfile
+    with tarfile.open(out, "r:gz") as tar:
+        assert "rotation_matrix.npy" in tar.getnames()
+        assert "state.db" in tar.getnames()
+
+
+def test_save_snapshot_fails_if_files_missing(runner, tmp_path):
+    cfg = _snapshot_cfg(tmp_path)  # files don't exist
+    with patch("ccmcp.__main__.load_config", return_value=cfg):
+        result = runner.invoke(cli, ["save-snapshot"])
+    assert result.exit_code != 0
+
+
+def test_load_snapshot_restores_files(runner, tmp_path):
+    import io
+    import tarfile
+
+    rot_dest = tmp_path / "restored" / "rotation_matrix.npy"
+    db_dest = tmp_path / "restored" / "state.db"
+    cfg = _snapshot_cfg(tmp_path, rot_dest, db_dest)
+
+    archive = tmp_path / "snap.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for name, data in [("rotation_matrix.npy", b"rot"), ("state.db", b"db")]:
+            buf = io.BytesIO(data)
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tar.addfile(info, buf)
+
+    with patch("ccmcp.__main__.load_config", return_value=cfg):
+        result = runner.invoke(cli, ["load-snapshot", str(archive), "--yes"])
+    assert result.exit_code == 0
+    assert rot_dest.exists()
+    assert db_dest.exists()
+
+
+def test_load_snapshot_rejects_missing_archive(runner, tmp_path):
+    cfg = _snapshot_cfg(tmp_path)
+    with patch("ccmcp.__main__.load_config", return_value=cfg):
+        result = runner.invoke(cli, ["load-snapshot", "/nonexistent/snap.tar.gz", "--yes"])
+    assert result.exit_code != 0
+
+
 def test_doctor_unreachable_qdrant_clean_error(runner, mock_components):
     from ccmcp.store import VectorStore
 

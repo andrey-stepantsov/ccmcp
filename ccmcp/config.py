@@ -118,6 +118,61 @@ class Config:
     mcp: McpConfig = field(default_factory=McpConfig)
 
 
+def config_to_dict(cfg: Config) -> dict:
+    """Serialise a resolved Config to a plain dict suitable for YAML export."""
+    return {
+        "qdrant": {
+            "url": cfg.qdrant.url,
+            "collection": cfg.qdrant.collection,
+            **({"api_key": cfg.qdrant.api_key} if cfg.qdrant.api_key else {}),
+        },
+        "embedding": {
+            "dense_model": cfg.embedding.dense_model,
+            "sparse_model": cfg.embedding.sparse_model,
+            "rotation_matrix": cfg.embedding.rotation_matrix,
+        },
+        "extraction": {
+            "backend": cfg.extraction.backend,
+        },
+        "sources": {
+            "filesystem": {
+                "enabled": cfg.sources.filesystem.enabled,
+                "paths": [
+                    ({"path": sp.path, "name": sp.name, "tags": sp.tags, "include": sp.include}
+                     if sp.name or sp.tags or sp.include else sp.path)
+                    for sp in cfg.sources.filesystem.paths
+                ],
+                "watch": cfg.sources.filesystem.watch,
+                "extensions": cfg.sources.filesystem.extensions,
+                "ignore": cfg.sources.filesystem.ignore,
+                "poll_interval": cfg.sources.filesystem.poll_interval,
+            },
+            "web": {
+                "enabled": cfg.sources.web.enabled,
+                "urls": cfg.sources.web.urls,
+                "sitemaps": cfg.sources.web.sitemaps,
+                "rate_limit_ms": cfg.sources.web.rate_limit_ms,
+                "user_agent": cfg.sources.web.user_agent,
+            },
+            "google_drive": {
+                "enabled": cfg.sources.google_drive.enabled,
+                "credentials_file": cfg.sources.google_drive.credentials_file,
+                "folders": [{"id": f.id, "name": f.name} for f in cfg.sources.google_drive.folders],
+                "poll_interval_min": cfg.sources.google_drive.poll_interval_min,
+            },
+        },
+        "mcp": {
+            "host": cfg.mcp.host,
+            "port": cfg.mcp.port,
+            "result_limit": cfg.mcp.result_limit,
+        },
+        "state": {
+            "db_path": cfg.state.db_path,
+            "artifact_ttl_days": cfg.state.artifact_ttl_days,
+        },
+    }
+
+
 def _parse_source_paths(raw: list) -> list[SourcePath]:
     """Parse path entries that are either plain strings or dicts with metadata."""
     result = []
