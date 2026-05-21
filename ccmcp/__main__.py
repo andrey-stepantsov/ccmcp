@@ -473,8 +473,6 @@ def load_config_cmd(ctx, input_file: str, yes: bool):
       ccmcp load-config backup.yaml
       docker compose exec ccmcp ccmcp load-config /data/config-backup.yaml
     """
-    import yaml as _yaml
-
     src = Path(input_file)
     if not src.exists():
         raise click.ClickException(f"File not found: {input_file}")
@@ -497,7 +495,9 @@ def load_config_cmd(ctx, input_file: str, yes: bool):
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     console.print(f"[green]Config loaded to:[/green] {dest}")
-    console.print("Run [bold]ccmcp init[/bold] then [bold]ccmcp scan[/bold] to rebuild the dataset.")
+    console.print(
+        "Run [bold]ccmcp init[/bold] then [bold]ccmcp scan[/bold] to rebuild the dataset."
+    )
 
 
 @cli.command("save-snapshot")
@@ -566,7 +566,7 @@ def load_snapshot(ctx, archive: str, yes: bool):
             raise click.ClickException("Archive is missing rotation_matrix.npy or state.db")
 
         if not yes:
-            click.echo(f"Restore to:")
+            click.echo("Restore to:")
             click.echo(f"  rotation_matrix → {rot_dest}")
             click.echo(f"  state.db        → {db_dest}")
             if rot_dest.exists():
@@ -584,7 +584,7 @@ def load_snapshot(ctx, archive: str, yes: bool):
         member.name = db_dest.name
         tar.extract(member, path=db_dest.parent, filter="data")
 
-    console.print(f"[green]Snapshot restored.[/green]")
+    console.print("[green]Snapshot restored.[/green]")
     console.print("Run [bold]ccmcp init[/bold] then [bold]ccmcp scan[/bold] to rebuild the index.")
 
 

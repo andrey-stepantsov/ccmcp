@@ -4,13 +4,13 @@ No Qdrant, no model loading — all store/embedder calls are mocked.
 """
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
 from starlette.testclient import TestClient
-from unittest.mock import MagicMock
 
 from ccmcp.metrics import make_observable_app
-
 
 # ── Shared fixtures ──────────────────────────────────────────────────────────
 

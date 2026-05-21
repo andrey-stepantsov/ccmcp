@@ -157,7 +157,7 @@ def test_ingest_file(runner, mock_components, tmp_path):
     test_file = tmp_path / "notes.md"
     test_file.write_text("# Hello\n\nSome content.", encoding="utf-8")
 
-    with patch.object(Controller, "ingest_file", return_value=None) as mock_ingest:
+    with patch.object(Controller, "ingest_file", return_value=None):
         result = runner.invoke(cli, ["ingest", str(test_file)])
     assert result.exit_code == 0
     assert "Ingested" in result.output
@@ -197,7 +197,6 @@ def test_load_config_validates_and_writes(runner, mock_components, tmp_path):
     src.write_text(yaml.dump({"qdrant": {"url": "http://localhost:6333"}}))
     dest = tmp_path / "config.yaml"
 
-    import os
     with runner.isolated_filesystem():
         result = runner.invoke(
             cli, ["load-config", str(src), "--yes"],

@@ -224,7 +224,8 @@ def test_snapshot_roundtrip():
     verify = subprocess.run(
         [*COMPOSE_CMD, "exec", "-T", "ccmcp",
          "python3", "-c",
-         "import tarfile; t=tarfile.open('/data/test-snapshot.tar.gz'); print(sorted(t.getnames()))"],
+         "import tarfile; t=tarfile.open('/data/test-snapshot.tar.gz');"
+         " print(sorted(t.getnames()))"],
         capture_output=True, text=True, check=True, timeout=15,
     )
     assert "rotation_matrix.npy" in verify.stdout
@@ -293,7 +294,7 @@ class MCPSession:
         self._pending: dict[int, dict] = {}
         self._req_id = 0
 
-    def __enter__(self) -> "MCPSession":
+    def __enter__(self) -> MCPSession:
         endpoint_q: queue.Queue[str] = queue.Queue()
 
         def _reader() -> None:

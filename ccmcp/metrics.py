@@ -169,13 +169,17 @@ _SEARCH_UI_HTML = """\
     .result.web     { border-left-color: var(--green); }
     .result.drive   { border-left-color: var(--purple); }
     .result.artifact{ border-left-color: var(--yellow); }
-    .result-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .result-meta {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;
+    }
     .badge {
       font-size: 10px; padding: 1px 6px; border-radius: 10px;
       border: 1px solid var(--border); color: var(--muted);
       text-transform: uppercase; letter-spacing: .04em;
     }
-    .result-source { font-family: monospace; font-size: 12px; color: var(--accent); word-break: break-all; }
+    .result-source {
+      font-family: monospace; font-size: 12px; color: var(--accent); word-break: break-all;
+    }
     .result-section { color: var(--muted); font-size: 12px; }
     .result-section::before { content: "\\00a7 "; }
     .result-text {
