@@ -14,4 +14,5 @@ done
 echo "Qdrant ready."
 
 python -m ccmcp init
-exec python -m ccmcp run
+# Bind to 0.0.0.0 so Docker port-forwarding can reach the server from outside
+exec python -m ccmcp run --host 0.0.0.0

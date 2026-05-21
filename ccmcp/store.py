@@ -44,8 +44,8 @@ class VectorStore:
                     "dense": models.VectorParams(
                         size=dense_dim,
                         distance=models.Distance.COSINE,
-                        quantization_config=models.ScalarQuantizationConfig(
-                            scalar=models.ScalarQuantization(
+                        quantization_config=models.ScalarQuantization(
+                            scalar=models.ScalarQuantizationConfig(
                                 type=models.ScalarType.INT8,
                                 quantile=0.99,
                                 always_ram=True,
@@ -210,13 +210,16 @@ class VectorStore:
 
     def collection_info(self) -> dict:
         info = self._client.get_collection(self._collection)
-        return {
+        result = {
             "points_count": info.points_count,
-            "vectors_count": info.vectors_count,
             "indexed_vectors_count": info.indexed_vectors_count,
             "segments_count": info.segments_count,
             "status": str(info.status),
         }
+        # vectors_count removed in qdrant-client >=1.14; fall back gracefully
+        if hasattr(info, "vectors_count"):
+            result["vectors_count"] = info.vectors_count
+        return result
 
     def list_scopes(self) -> list[dict]:
         """Return one entry per distinct source_root that has a project_name stamped.

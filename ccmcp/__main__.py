@@ -108,7 +108,7 @@ def _scope_filter(scope: list[str]) -> qdrant_models.Filter:
 
 
 def _build_mcp(cfg, embedder, store) -> FastMCP:
-    mcp = FastMCP("ccmcp", description="Hybrid vector search over your codebase")
+    mcp = FastMCP("ccmcp", instructions="Hybrid vector search over your codebase")
     path_index = _build_path_index(cfg)
 
     @mcp.tool(description=(
@@ -405,9 +405,10 @@ def serve(ctx, host: str | None, port: int | None):
     p = port or cfg.mcp.port
     mcp = _build_mcp(cfg, embedder, store)
     start_collection_poller(store, state)
-    app = make_observable_app(mcp.sse_app())
+    app = make_observable_app(mcp.sse_app(), store=store, embedder=embedder)
     console.print(f"[bold]ccmcp MCP server[/bold] → http://{h}:{p}/sse")
     console.print(f"[dim]Prometheus metrics → http://{h}:{p}/metrics[/dim]")
+    console.print(f"[dim]Search UI          → http://{h}:{p}/[/dim]")
     uvicorn.run(app, host=h, port=p, log_level="warning")
 
 
@@ -610,9 +611,10 @@ def run(ctx, host: str | None, port: int | None):
 
     start_collection_poller(store, state)
     mcp = _build_mcp(cfg, embedder, store)
-    app = make_observable_app(mcp.sse_app())
+    app = make_observable_app(mcp.sse_app(), store=store, embedder=embedder)
     console.print(f"[bold]ccmcp MCP server[/bold] → http://{h}:{p}/sse")
     console.print(f"[dim]Prometheus metrics → http://{h}:{p}/metrics[/dim]")
+    console.print(f"[dim]Search UI          → http://{h}:{p}/[/dim]")
     uvicorn.run(app, host=h, port=p, log_level="warning")
 
 

@@ -56,4 +56,5 @@ testpaths = ["tests"]
 markers = [
   "integration: requires a running Qdrant instance",
   "slow: downloads ML models, skip in CI",
+  "e2e: full pipeline tests against the Docker test stack (run via scripts/test-docker.sh)",
 ]

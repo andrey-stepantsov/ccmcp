@@ -24,7 +24,7 @@ jobs:
         run: ruff check ccmcp/ tests/
 
       - name: Unit tests
-        run: pytest tests/ -v --tb=short -m "not slow and not integration"
+        run: pytest tests/ -v --tb=short -m "not slow and not integration and not e2e"
 
   typecheck:
     runs-on: ubuntu-latest
@@ -35,3 +35,41 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: mypy ccmcp/
+
+  e2e:
+    runs-on: ubuntu-latest
+    # Run E2E only on push to main; PRs get fast unit-test feedback instead
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test runner
+        run: pip install httpx pytest pytest-asyncio
+
+      - name: Build and start test stack
+        run: docker compose -p ccmcp-test -f docker-compose.test.yml up -d --build
+        env:
+          DOCKER_BUILDKIT: "1"
+
+      - name: Wait for stack to be healthy
+        run: |
+          echo "Waiting for ccmcp to be ready…"
+          timeout 180 bash -c \
+            'until curl -sf http://localhost:7701/metrics >/dev/null 2>&1; do sleep 5; done'
+          echo "Stack is healthy."
+
+      - name: Run E2E tests
+        env:
+          CCMCP_TEST_MCP_URL: http://localhost:7701
+          CCMCP_TEST_QDRANT_URL: http://localhost:6334
+          CCMCP_TEST_COMPOSE_FILE: docker-compose.test.yml
+          CCMCP_TEST_PROJECT: ccmcp-test
+        run: pytest tests/test_e2e.py -m e2e -v --tb=short
+
+      - name: Tear down test stack
+        if: always()
+        run: docker compose -p ccmcp-test -f docker-compose.test.yml down -v

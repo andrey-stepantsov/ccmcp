@@ -1,0 +1,31 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6334:6333"
+    volumes:
+      - test-qdrant-data:/qdrant/storage
+
+  ccmcp:
+    build: .
+    depends_on:
+      - qdrant
+    ports:
+      - "7701:7700"
+    volumes:
+      - test-ccmcp-data:/data
+      - ./tests/fixtures:/repos:ro
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      CCMCP_SOURCE_PATH: /repos
+      CCMCP_CONFIG: /data/config.yaml
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7700/metrics"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  test-qdrant-data:
+  test-ccmcp-data:
