@@ -47,6 +47,8 @@ class Embedder:
         self._load()
         EMBED_BATCH_SIZE.observe(len(texts))
         t0 = time.perf_counter()
+        assert self._dense_embedder is not None
+        assert self._sparse_embedder is not None
         dense = np.array(list(self._dense_embedder.embed(texts)), dtype=np.float32)
         if self._R is not None:
             dense = dense @ self._R

@@ -123,7 +123,7 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
         query: str,
         limit: int = 10,
         scope: list[str] | None = None,
-        ctx: Context = None,
+        ctx: Context | None = None,
     ) -> str:
         query = query[:8192]
         limit = max(1, min(limit, cfg.mcp.result_limit))

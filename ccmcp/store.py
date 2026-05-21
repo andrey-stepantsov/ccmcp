@@ -198,12 +198,14 @@ class VectorStore:
         return point_id
 
     def cleanup_artifacts(self, cutoff_iso: str):
+        from datetime import datetime
+        cutoff_dt = datetime.fromisoformat(cutoff_iso.replace("Z", "+00:00"))
         self._client.delete(
             collection_name=self._artifact_collection,
             points_selector=models.FilterSelector(filter=models.Filter(must=[
                 models.FieldCondition(
                     key="ingested_at",
-                    range=models.DatetimeRange(lt=cutoff_iso),
+                    range=models.DatetimeRange(lt=cutoff_dt),
                 )
             ])),
         )
