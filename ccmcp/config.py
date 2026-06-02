@@ -55,12 +55,14 @@ class FilesystemConfig:
     watch: bool = True
     extensions: list[str] = field(default_factory=lambda: [
         ".md", ".rst", ".txt", ".py", ".go", ".rs", ".js", ".ts",
-        ".yaml", ".yml", ".json", ".c", ".cpp", ".h",
+        ".yaml", ".yml",
+        ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh",
     ])
     ignore: list[str] = field(default_factory=lambda: [
         "node_modules", ".git", "__pycache__", "*.pyc",
         "build", "dist", ".venv", "*.egg-info",
     ])
+    respect_gitignore: bool = True
     poll_interval: int = 30
 
 
@@ -145,6 +147,7 @@ def config_to_dict(cfg: Config) -> dict:
                 "watch": cfg.sources.filesystem.watch,
                 "extensions": cfg.sources.filesystem.extensions,
                 "ignore": cfg.sources.filesystem.ignore,
+                "respect_gitignore": cfg.sources.filesystem.respect_gitignore,
                 "poll_interval": cfg.sources.filesystem.poll_interval,
             },
             "web": {
@@ -240,6 +243,7 @@ def load_config(path: str | None = None) -> Config:
                 watch=fs.get("watch", True),
                 extensions=fs.get("extensions", cfg.sources.filesystem.extensions),
                 ignore=fs.get("ignore", cfg.sources.filesystem.ignore),
+                respect_gitignore=fs.get("respect_gitignore", True),
                 poll_interval=fs.get("poll_interval", 30),
             )
         if wb := s.get("web"):
@@ -259,10 +263,15 @@ def load_config(path: str | None = None) -> Config:
                 poll_interval_min=dr.get("poll_interval_min", 15),
             )
 
-    # CCMCP_SOURCE_PATH overrides filesystem paths (Docker use case)
+    # CCMCP_SOURCE_PATH overrides filesystem paths (Docker use case).
+    # Stamp a project name derived from the path basename so scoping works
+    # even without an explicit config entry.
     source_path = os.environ.get("CCMCP_SOURCE_PATH")
     if source_path and not cfg.sources.filesystem.paths:
-        cfg.sources.filesystem.paths = [SourcePath(path=source_path)]
+        derived_name = Path(source_path.rstrip("/")).name or source_path
+        cfg.sources.filesystem.paths = [
+            SourcePath(path=source_path, name=derived_name)
+        ]
         cfg.sources.filesystem.enabled = True
 
     if st := raw.get("state"):

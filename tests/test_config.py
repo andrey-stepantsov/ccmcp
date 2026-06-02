@@ -112,3 +112,45 @@ def test_state_db_path_expanded(tmp_path):
 def test_extraction_backend_default():
     cfg = load_config("/nonexistent/path.yaml")
     assert cfg.extraction.backend == "none"
+
+
+def test_default_extensions_include_cc_cxx_hpp():
+    cfg = load_config("/nonexistent/path.yaml")
+    exts = cfg.sources.filesystem.extensions
+    assert ".cc" in exts
+    assert ".cxx" in exts
+    assert ".hpp" in exts
+
+
+def test_default_extensions_drop_json():
+    """JSON inflates code indexes with generated/lockfile content — opt-in only."""
+    cfg = load_config("/nonexistent/path.yaml")
+    assert ".json" not in cfg.sources.filesystem.extensions
+
+
+def test_default_respect_gitignore_is_true():
+    cfg = load_config("/nonexistent/path.yaml")
+    assert cfg.sources.filesystem.respect_gitignore is True
+
+
+def test_respect_gitignore_can_be_disabled(tmp_path):
+    path = _write_config(tmp_path, {
+        "sources": {"filesystem": {"respect_gitignore": False}}
+    })
+    cfg = load_config(path)
+    assert cfg.sources.filesystem.respect_gitignore is False
+
+
+def test_source_path_env_derives_name(tmp_path, monkeypatch):
+    """CCMCP_SOURCE_PATH must stamp a project name so scoping works under Docker."""
+    monkeypatch.setenv("CCMCP_SOURCE_PATH", "/repos/zsdk")
+    cfg = load_config(str(tmp_path / "nonexistent.yaml"))
+    sp = cfg.sources.filesystem.paths[0]
+    assert sp.path == "/repos/zsdk"
+    assert sp.name == "zsdk"
+
+
+def test_source_path_env_trailing_slash(tmp_path, monkeypatch):
+    monkeypatch.setenv("CCMCP_SOURCE_PATH", "/repos/zsdk/")
+    cfg = load_config(str(tmp_path / "nonexistent.yaml"))
+    assert cfg.sources.filesystem.paths[0].name == "zsdk"

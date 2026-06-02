@@ -133,3 +133,39 @@ def test_hard_split_very_long_line():
     assert len(chunks) > 1
     for c in chunks:
         assert _tok(c.text) <= MAX_TOKENS * 1.1
+
+
+def _cpp_body(name: str) -> str:
+    """Function body large enough to exceed MIN_TOKENS so chunks don't merge."""
+    return f"int {name}(int x) {{\n" + "  return x;\n" * 80 + "}\n"
+
+
+def test_cpp_cc_extension_function_chunked():
+    content = _cpp_body("Alpha") + "\n" + _cpp_body("Beta")
+    chunks = chunk_file("file.cc", content, URI)
+    texts = " ".join(c.text for c in chunks)
+    assert "Alpha" in texts
+    assert "Beta" in texts
+    # Two large functions must split — would be one chunk if .cc fell through to text.
+    assert len(chunks) >= 2
+
+
+def test_cpp_cxx_extension_function_chunked():
+    content = _cpp_body("Foo") + "\n" + _cpp_body("Bar")
+    chunks = chunk_file("file.cxx", content, URI)
+    texts = " ".join(c.text for c in chunks)
+    assert "Foo" in texts
+    assert "Bar" in texts
+    assert len(chunks) >= 2
+
+
+def test_hpp_extension_function_chunked():
+    content = (
+        "class Widget {\npublic:\n  void DoOne();\n  void DoTwo();\n};\n\n"
+        "void Widget::DoOne() { return; }\n\n"
+        "void Widget::DoTwo() { return; }\n"
+    )
+    chunks = chunk_file("widget.hpp", content, URI)
+    texts = " ".join(c.text for c in chunks)
+    assert "DoOne" in texts
+    assert "DoTwo" in texts

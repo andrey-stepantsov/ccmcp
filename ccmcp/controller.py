@@ -128,6 +128,7 @@ class Controller:
                     roots=[sp.path],
                     extensions=cfg.sources.filesystem.extensions,
                     ignore=cfg.sources.filesystem.ignore,
+                    respect_gitignore=cfg.sources.filesystem.respect_gitignore,
                 )
                 log.info("filesystem scan %s: %d files found", sp.path, len(files))
                 for sf in files:
@@ -219,6 +220,7 @@ class Controller:
             ignore=fscfg.ignore,
             callback=on_change,
             poll_interval=fscfg.poll_interval,
+            respect_gitignore=fscfg.respect_gitignore,
         )
         try:
             while True:

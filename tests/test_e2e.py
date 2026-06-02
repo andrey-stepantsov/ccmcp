@@ -613,3 +613,123 @@ def test_search_unknown_scope_returns_empty_not_error():
     assert r.status_code == 200
     data = r.json()
     assert "results" in data
+
+
+# ---------------------------------------------------------------------------
+# Extension coverage — .cc files (S2 / C1 fix)
+# ---------------------------------------------------------------------------
+
+def _scroll_all(collection: str = "techdocs", page: int = 250) -> list[dict]:
+    """Scroll the entire collection and return all points."""
+    points: list[dict] = []
+    offset: object = None
+    while True:
+        body: dict = {
+            "limit": page,
+            "with_payload": ["text", "source_uri"],
+        }
+        if offset is not None:
+            body["offset"] = offset
+        r = httpx.post(
+            f"{QDRANT_URL}/collections/{collection}/points/scroll",
+            json=body, timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        result = r.json()["result"]
+        points.extend(result["points"])
+        offset = result.get("next_page_offset")
+        if offset is None:
+            break
+    return points
+
+
+def test_cc_extension_is_indexed():
+    """The fixtures/cppproj/widget.cc file must be discovered and indexed."""
+    wait_for_points()
+    points = _scroll_all()
+    uris = {p["payload"].get("source_uri", "") for p in points}
+    assert any(u.endswith("/cppproj/widget.cc") for u in uris), \
+        f"widget.cc not indexed — .cc extension not picked up. URIs: {sorted(uris)[:20]}"
+
+
+def test_cc_content_is_searchable_via_unique_token():
+    """A unique token inside widget.cc must be searchable through the human UI."""
+    wait_for_points()
+    r = httpx.post(
+        f"{MCP_URL}/search",
+        json={
+            "query": "CPLUSPLUS_FIXTURE_E2E_TOKEN_X1 widget",
+            "scope": ["*"],
+            "limit": 10,
+        },
+        timeout=15,
+    )
+    assert r.status_code == 200
+    results = r.json()["results"]
+    assert any("CPLUSPLUS_FIXTURE_E2E_TOKEN_X1" in res.get("text", "") for res in results), \
+        "Unique .cc token not found in any search result"
+
+
+# ---------------------------------------------------------------------------
+# .gitignore enforcement (G1 / G2 / G3 fix)
+# ---------------------------------------------------------------------------
+
+def test_gitignored_file_is_not_indexed():
+    """secret.md is listed in cppproj/.gitignore and must NOT be in the index."""
+    wait_for_points()
+    points = _scroll_all()
+    uris = {p["payload"].get("source_uri", "") for p in points}
+    leaked = [u for u in uris if u.endswith("/cppproj/secret.md")]
+    assert not leaked, f"gitignored secret.md leaked into index: {leaked}"
+
+
+def test_gitignored_dir_is_not_indexed():
+    """The generated/ dir is .gitignored — its contents must not be indexed."""
+    wait_for_points()
+    points = _scroll_all()
+    uris = {p["payload"].get("source_uri", "") for p in points}
+    leaked = [u for u in uris if "/cppproj/generated/" in u]
+    assert not leaked, f"gitignored generated/ dir leaked into index: {leaked}"
+
+
+def test_public_control_file_IS_indexed():
+    """public.md sits next to gitignored secret.md — it must still be indexed."""
+    wait_for_points()
+    points = _scroll_all()
+    uris = {p["payload"].get("source_uri", "") for p in points}
+    assert any(u.endswith("/cppproj/public.md") for u in uris), \
+        "Control file public.md missing — .gitignore matcher may be over-broad"
+
+
+def test_gitignored_token_does_not_appear_in_search():
+    """Cross-check: the secret token must not surface via the search endpoint."""
+    wait_for_points()
+    r = httpx.post(
+        f"{MCP_URL}/search",
+        json={
+            "query": "GITIGNORE_SECRET_E2E_TOKEN_Z9",
+            "scope": ["*"],
+            "limit": 10,
+        },
+        timeout=15,
+    )
+    assert r.status_code == 200
+    for res in r.json()["results"]:
+        assert "GITIGNORE_SECRET_E2E_TOKEN_Z9" not in res.get("text", ""), \
+            f"Gitignored content leaked through search: {res.get('source_uri')}"
+
+
+# ---------------------------------------------------------------------------
+# CCMCP_SOURCE_PATH name derivation (S1 fix)
+# ---------------------------------------------------------------------------
+
+def test_source_path_env_stamps_project_name():
+    """With CCMCP_SOURCE_PATH=/repos, list_scopes must surface a 'repos' project."""
+    wait_for_points()
+    r = httpx.get(f"{MCP_URL}/scopes", timeout=10)
+    assert r.status_code == 200
+    scopes = r.json()
+    names = [s.get("name", "") for s in scopes]
+    # The compose file sets CCMCP_SOURCE_PATH=/repos, basename derives "repos".
+    assert "repos" in names, \
+        f"CCMCP_SOURCE_PATH did not stamp a project name: scopes={scopes}"

@@ -13,13 +13,33 @@ from qdrant_client import models as qdrant_models
 from rich.console import Console
 from rich.table import Table
 
-from ccmcp.config import config_to_dict, load_config
+from ccmcp.config import SourcePath, config_to_dict, load_config
 from ccmcp.controller import _resolved
 from ccmcp.embedder import Embedder
 from ccmcp.state import StateDB
 from ccmcp.store import VectorStore
 
 console = Console()
+log = logging.getLogger(__name__)
+
+
+def _host_to_container(path: str) -> str:
+    """Rewrite a host-side path to its container-side equivalent.
+
+    Set CCMCP_HOST_MOUNT (e.g. /Users/alice/code) and CCMCP_CONTAINER_MOUNT
+    (e.g. /workspace) when running under Docker so that MCP root URIs sent
+    by the host-resident agent resolve against container-side index paths.
+    """
+    import os
+    host = os.environ.get("CCMCP_HOST_MOUNT", "").rstrip("/")
+    container = os.environ.get("CCMCP_CONTAINER_MOUNT", "").rstrip("/")
+    if not host or not container:
+        return path
+    if path == host:
+        return container
+    if path.startswith(host + "/"):
+        return container + path[len(host):]
+    return path
 
 
 def _components(config_path: str | None):
@@ -38,16 +58,39 @@ def _components(config_path: str | None):
     return cfg, embedder, store, state
 
 
-def _build_path_index(cfg) -> dict[str, object]:
+def _build_path_index(cfg) -> dict[str, SourcePath]:
     """Build a resolved-path → SourcePath index from config for MCP root resolution."""
     return {_resolved(sp.path): sp for sp in cfg.sources.filesystem.paths}
 
 
-async def _roots_filter(ctx: Context, path_index: dict) -> qdrant_models.Filter | None:
+def _match_root(
+    resolved: str, path_index: dict[str, SourcePath]
+) -> tuple[str, SourcePath] | None:
+    """Match a resolved path against the configured sources by longest ancestor prefix.
+
+    Allows the agent to open a subdirectory of an indexed project and still
+    get scoped retrieval. Returns the (configured_root, SourcePath) pair
+    whose root is the deepest ancestor of `resolved`, or None on miss.
+    """
+    import os
+    best: tuple[str, SourcePath] | None = None
+    for cfg_root, sp in path_index.items():
+        if resolved == cfg_root or resolved.startswith(cfg_root + os.sep):
+            if best is None or len(cfg_root) > len(best[0]):
+                best = (cfg_root, sp)
+    return best
+
+
+async def _roots_filter(
+    ctx: Context, path_index: dict[str, SourcePath]
+) -> qdrant_models.Filter | None:
     """Build a Qdrant filter scoped to the session's MCP roots.
 
-    Resolves incoming MCP root URIs against the config path index.
-    Returns None (unfiltered) when no active root matches a configured source.
+    Resolves incoming MCP root URIs against the config path index, accepting
+    either the configured root itself or any subdirectory of it. Honours
+    CCMCP_HOST_MOUNT / CCMCP_CONTAINER_MOUNT for Docker host→container
+    path remapping. Returns None (unscoped) only when no root matches —
+    in which case we log so the silent fallback is visible.
     """
     try:
         result = await ctx.request_context.session.list_roots()
@@ -60,22 +103,34 @@ async def _roots_filter(ctx: Context, path_index: dict) -> qdrant_models.Filter 
 
     root_paths: list[str] = []
     include_tags: list[str] = []
+    incoming: list[str] = []
 
     for root in roots:
         raw_uri = str(root.uri)
         path = raw_uri.removeprefix("file://")
+        path = _host_to_container(path)
         try:
             resolved = str(Path(path).resolve())
         except Exception:
             resolved = path
+        incoming.append(resolved)
 
-        sp = path_index.get(resolved)
-        if sp:
-            root_paths.append(resolved)
-            include_tags.extend(sp.include)
+        match = _match_root(resolved, path_index)
+        if match is None:
+            continue
+        cfg_root, sp = match
+        if cfg_root not in root_paths:
+            root_paths.append(cfg_root)
+        include_tags.extend(sp.include)
 
     if not root_paths:
-        return None  # no configured source matches → unscoped search
+        log.info(
+            "no configured source matches MCP roots %s — search will be unscoped "
+            "(set CCMCP_HOST_MOUNT/CCMCP_CONTAINER_MOUNT for Docker, "
+            "or add the path to sources.filesystem.paths)",
+            incoming,
+        )
+        return None
 
     conditions: list[qdrant_models.Condition] = [
         qdrant_models.FieldCondition(

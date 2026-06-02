@@ -24,6 +24,10 @@ class Chunk:
 HEADING_RE = re.compile(r"^(#{1,4})\s+(.+)$", re.MULTILINE)
 RST_HEADING_RE = re.compile(r"^([^\n]+)\n([=\-~^+#*]{3,})\s*$", re.MULTILINE)
 
+_C_FUNC = re.compile(r"^[A-Za-z_][\w\s*]+\s+\w+\s*\([^)]*\)\s*\{", re.MULTILINE)
+_CPP_FUNC = re.compile(r"^[A-Za-z_][\w\s*:]+\s+\w+\s*\([^)]*\)\s*\{", re.MULTILINE)
+_H_DECL = re.compile(r"^[A-Za-z_][\w\s*:]+\s+\w+\s*\([^)]*\)\s*[{;]", re.MULTILINE)
+
 _CODE_PATTERNS: dict[str, re.Pattern[str]] = {
     ".py":  re.compile(r"^(async def |def |class )", re.MULTILINE),
     ".go":  re.compile(r"^func ", re.MULTILINE),
@@ -34,9 +38,13 @@ _CODE_PATTERNS: dict[str, re.Pattern[str]] = {
         r"|const \w+ = (?:async )?(?:function|\())",
         re.MULTILINE,
     ),
-    ".c":   re.compile(r"^[A-Za-z_][\w\s*]+\s+\w+\s*\([^)]*\)\s*\{", re.MULTILINE),
-    ".cpp": re.compile(r"^[A-Za-z_][\w\s*:]+\s+\w+\s*\([^)]*\)\s*\{", re.MULTILINE),
-    ".h":   re.compile(r"^[A-Za-z_][\w\s*:]+\s+\w+\s*\([^)]*\)\s*[{;]", re.MULTILINE),
+    ".c":   _C_FUNC,
+    ".cpp": _CPP_FUNC,
+    ".cc":  _CPP_FUNC,
+    ".cxx": _CPP_FUNC,
+    ".h":   _H_DECL,
+    ".hpp": _H_DECL,
+    ".hh":  _H_DECL,
 }
 
 _MARKDOWN_EXTS = {".md"}
