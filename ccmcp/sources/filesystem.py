@@ -32,30 +32,49 @@ def _matches_ignore(name: str, patterns: list[str]) -> bool:
 class GitIgnoreCascade:
     """Per-root cascade of .gitignore patterns.
 
-    Loads every .gitignore under `root` once at construction. To test a path,
-    walks up its ancestors (root → leaf) and applies each spec relative to
-    the directory that owns it. Within a single .gitignore, pathspec handles
-    `!` negation correctly; cross-file negation is not modelled (rare in
-    practice and the simplification is documented in the project notes).
+    Built incrementally: the constructor only records the root. Callers invoke
+    `load_dir(dirpath)` for each directory they visit (in ancestor-first order)
+    so the cascade is populated lazily as a tree walk descends. Because
+    gitignore semantics only need ANCESTOR .gitignore files when judging a
+    path, a single pruned walk that calls `load_dir` at each step produces
+    correct results without re-walking the tree.
+
+    To test a path, walks up its ancestors (root → leaf) and applies each spec
+    relative to the directory that owns it. Within a single .gitignore,
+    pathspec handles `!` negation correctly; cross-file negation is not
+    modelled (rare in practice and the simplification is documented in the
+    project notes).
     """
 
     def __init__(self, root: str):
         self._root = os.path.realpath(root)
         self._specs: dict[str, pathspec.PathSpec] = {}
-        self._load()
+        self._loaded_dirs: set[str] = set()
+
+    def load_dir(self, dirpath: str) -> None:
+        """Load `dirpath/.gitignore` if present and not yet loaded."""
+        real = os.path.realpath(dirpath)
+        if real in self._loaded_dirs:
+            return
+        self._loaded_dirs.add(real)
+        gi = Path(dirpath) / _GITIGNORE
+        if not gi.is_file():
+            return
+        try:
+            lines = gi.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            return
+        self._specs[real] = pathspec.PathSpec.from_lines(_PATHSPEC_STYLE, lines)
 
     def _load(self) -> None:
-        for dirpath, _dirnames, filenames in os.walk(self._root):
-            if _GITIGNORE not in filenames:
-                continue
-            gi = Path(dirpath) / _GITIGNORE
-            try:
-                lines = gi.read_text(encoding="utf-8", errors="ignore").splitlines()
-            except OSError:
-                continue
-            self._specs[os.path.realpath(dirpath)] = pathspec.PathSpec.from_lines(
-                _PATHSPEC_STYLE, lines
-            )
+        """Backwards-compatible eager load: walk the whole tree, no pruning.
+
+        Retained so callers that constructed a cascade via the old eager flow
+        (or via tests that touch this private helper) still get identical
+        behaviour. New code paths in scan()/watch() use `load_dir` instead.
+        """
+        for dirpath, _dirnames, _filenames in os.walk(self._root):
+            self.load_dir(dirpath)
 
     def is_ignored(self, path: str, is_dir: bool = False) -> bool:
         abs_path = os.path.realpath(path)
@@ -118,7 +137,14 @@ def scan(
     files: list[SourceFile] = []
     for root in roots:
         cascade = GitIgnoreCascade(root) if respect_gitignore else None
+        # Single pruned walk: load each directory's .gitignore into the
+        # cascade BEFORE pruning, so children can be judged against any
+        # patterns the directory itself contributes; then prune. os.walk's
+        # top-down semantics guarantee ancestors are visited before
+        # descendants, which is all gitignore semantics require.
         for dirpath, dirnames, filenames in os.walk(root):
+            if cascade is not None:
+                cascade.load_dir(dirpath)
             dirnames[:] = [
                 d for d in dirnames
                 if not _excluded(os.path.join(dirpath, d), True, ignore, cascade)
@@ -136,6 +162,24 @@ def scan(
                 except OSError:
                     pass
     return files
+
+
+def _build_cascade_pruned(root: str, ignore_patterns: list[str]) -> GitIgnoreCascade:
+    """Pre-populate a cascade by doing one pruned walk of `root`.
+
+    Used by watch() so .git/, node_modules/, build/, etc. are skipped during
+    cascade construction. The prune predicate is exactly the one used by the
+    scan path, so the resulting cascade covers every directory the watcher
+    will be asked to judge.
+    """
+    cascade = GitIgnoreCascade(root)
+    for dirpath, dirnames, _filenames in os.walk(root):
+        cascade.load_dir(dirpath)
+        dirnames[:] = [
+            d for d in dirnames
+            if not _excluded(os.path.join(dirpath, d), True, ignore_patterns, cascade)
+        ]
+    return cascade
 
 
 class _Handler(FileSystemEventHandler):
@@ -198,7 +242,11 @@ def watch(
     poll_interval: int = 30,
     respect_gitignore: bool = True,
 ) -> PollingObserver:
-    cascades = [GitIgnoreCascade(r) for r in roots] if respect_gitignore else []
+    cascades = (
+        [_build_cascade_pruned(r, ignore) for r in roots]
+        if respect_gitignore
+        else []
+    )
     handler = _Handler(callback, {e.lower() for e in extensions}, ignore, cascades)
     # PollingObserver is used unconditionally: bind mounts in Docker (and WSL2
     # /mnt/ paths) do not propagate inotify events reliably.

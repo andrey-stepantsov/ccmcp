@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,7 +31,6 @@ def _host_to_container(path: str) -> str:
     (e.g. /workspace) when running under Docker so that MCP root URIs sent
     by the host-resident agent resolve against container-side index paths.
     """
-    import os
     host = os.environ.get("CCMCP_HOST_MOUNT", "").rstrip("/")
     container = os.environ.get("CCMCP_CONTAINER_MOUNT", "").rstrip("/")
     if not host or not container:
@@ -72,7 +72,6 @@ def _match_root(
     get scoped retrieval. Returns the (configured_root, SourcePath) pair
     whose root is the deepest ancestor of `resolved`, or None on miss.
     """
-    import os
     best: tuple[str, SourcePath] | None = None
     for cfg_root, sp in path_index.items():
         if resolved == cfg_root or resolved.startswith(cfg_root + os.sep):
@@ -538,7 +537,6 @@ def load_config_cmd(ctx, input_file: str, yes: bool):
     except Exception as exc:
         raise click.ClickException(f"Invalid config: {exc}") from None
 
-    import os
     dest = Path(os.environ.get("CCMCP_CONFIG", "config.yaml"))
 
     if not yes:
