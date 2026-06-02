@@ -88,6 +88,7 @@ def test_prefix_must_be_path_component(path_index):
 def test_host_to_container_no_env(monkeypatch):
     monkeypatch.delenv("CCMCP_HOST_MOUNT", raising=False)
     monkeypatch.delenv("CCMCP_CONTAINER_MOUNT", raising=False)
+    monkeypatch.delenv("CCMCP_PATH_MAPS", raising=False)
     assert _host_to_container("/anything") == "/anything"
 
 
@@ -115,6 +116,51 @@ def test_host_to_container_trailing_slash_normalized(monkeypatch):
     monkeypatch.setenv("CCMCP_HOST_MOUNT", "/host/")
     monkeypatch.setenv("CCMCP_CONTAINER_MOUNT", "/container/")
     assert _host_to_container("/host/proj") == "/container/proj"
+
+
+def test_host_to_container_path_maps_multi_mount(monkeypatch):
+    """CCMCP_PATH_MAPS supports multiple host→container pairs at once."""
+    monkeypatch.delenv("CCMCP_HOST_MOUNT", raising=False)
+    monkeypatch.delenv("CCMCP_CONTAINER_MOUNT", raising=False)
+    monkeypatch.setenv(
+        "CCMCP_PATH_MAPS",
+        '{"/Users/alice/api": "/repos-api", "/Users/alice/web": "/repos-web"}',
+    )
+    assert _host_to_container("/Users/alice/api/handlers") == "/repos-api/handlers"
+    assert _host_to_container("/Users/alice/web/components") == "/repos-web/components"
+    # Unmapped paths stay untouched
+    assert _host_to_container("/Users/alice/scratch") == "/Users/alice/scratch"
+
+
+def test_host_to_container_path_maps_longest_prefix(monkeypatch):
+    """When one mount is nested inside another, longest-prefix wins."""
+    monkeypatch.delenv("CCMCP_HOST_MOUNT", raising=False)
+    monkeypatch.delenv("CCMCP_CONTAINER_MOUNT", raising=False)
+    monkeypatch.setenv(
+        "CCMCP_PATH_MAPS",
+        '{"/code": "/all", "/code/api": "/just-api"}',
+    )
+    # /code/api wins — it's a longer prefix than /code
+    assert _host_to_container("/code/api/handlers") == "/just-api/handlers"
+    # /code matches for paths NOT under /code/api
+    assert _host_to_container("/code/scripts") == "/all/scripts"
+
+
+def test_host_to_container_path_maps_and_legacy_pair_coexist(monkeypatch):
+    """Legacy CCMCP_HOST_MOUNT/CONTAINER_MOUNT still works alongside CCMCP_PATH_MAPS."""
+    monkeypatch.setenv("CCMCP_PATH_MAPS", '{"/code/api": "/repos-api"}')
+    monkeypatch.setenv("CCMCP_HOST_MOUNT", "/code/web")
+    monkeypatch.setenv("CCMCP_CONTAINER_MOUNT", "/repos-web")
+    assert _host_to_container("/code/api/x") == "/repos-api/x"
+    assert _host_to_container("/code/web/y") == "/repos-web/y"
+
+
+def test_host_to_container_path_maps_invalid_json_falls_back(monkeypatch):
+    """A malformed CCMCP_PATH_MAPS falls back to the legacy pair without crashing."""
+    monkeypatch.setenv("CCMCP_PATH_MAPS", "not-json{")
+    monkeypatch.setenv("CCMCP_HOST_MOUNT", "/code")
+    monkeypatch.setenv("CCMCP_CONTAINER_MOUNT", "/repos")
+    assert _host_to_container("/code/proj") == "/repos/proj"
 
 
 def test_match_root_uses_os_sep(path_index):

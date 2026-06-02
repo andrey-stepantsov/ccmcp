@@ -24,21 +24,55 @@ console = Console()
 log = logging.getLogger(__name__)
 
 
+def _path_maps() -> list[tuple[str, str]]:
+    """Collect host→container path-mapping pairs from the environment.
+
+    Two sources, in priority order:
+    1. CCMCP_PATH_MAPS — JSON object {"/host/path": "/container/path", ...}.
+       Supports multiple pairs for multi-project Docker setups.
+    2. CCMCP_HOST_MOUNT / CCMCP_CONTAINER_MOUNT — a single pair (legacy).
+
+    Returned list is sorted by host-prefix length descending so longest-prefix
+    matching does the right thing when one mount is a parent of another.
+    """
+    import json
+    pairs: list[tuple[str, str]] = []
+    raw = os.environ.get("CCMCP_PATH_MAPS", "").strip()
+    if raw:
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict):
+                for h, c in obj.items():
+                    if isinstance(h, str) and isinstance(c, str) and h and c:
+                        pairs.append((h.rstrip("/"), c.rstrip("/")))
+        except (json.JSONDecodeError, TypeError):
+            log.warning(
+                "CCMCP_PATH_MAPS is set but not valid JSON object {host: container}; "
+                "ignoring — falling back to CCMCP_HOST_MOUNT/CCMCP_CONTAINER_MOUNT"
+            )
+
+    host = os.environ.get("CCMCP_HOST_MOUNT", "").rstrip("/")
+    container = os.environ.get("CCMCP_CONTAINER_MOUNT", "").rstrip("/")
+    if host and container:
+        pairs.append((host, container))
+
+    pairs.sort(key=lambda p: len(p[0]), reverse=True)
+    return pairs
+
+
 def _host_to_container(path: str) -> str:
     """Rewrite a host-side path to its container-side equivalent.
 
-    Set CCMCP_HOST_MOUNT (e.g. /Users/alice/code) and CCMCP_CONTAINER_MOUNT
-    (e.g. /workspace) when running under Docker so that MCP root URIs sent
-    by the host-resident agent resolve against container-side index paths.
+    Pulls host→container mappings from CCMCP_PATH_MAPS (JSON, multi-pair) and
+    CCMCP_HOST_MOUNT / CCMCP_CONTAINER_MOUNT (single pair). Uses the longest
+    matching host prefix so nested mounts resolve correctly. When no mapping
+    matches, returns the path unchanged.
     """
-    host = os.environ.get("CCMCP_HOST_MOUNT", "").rstrip("/")
-    container = os.environ.get("CCMCP_CONTAINER_MOUNT", "").rstrip("/")
-    if not host or not container:
-        return path
-    if path == host:
-        return container
-    if path.startswith(host + "/"):
-        return container + path[len(host):]
+    for host, container in _path_maps():
+        if path == host:
+            return container
+        if path.startswith(host + "/"):
+            return container + path[len(host):]
     return path
 
 
@@ -161,8 +195,32 @@ def _scope_filter(scope: list[str]) -> qdrant_models.Filter:
     ])
 
 
+CCMCP_INSTRUCTIONS = """\
+ccmcp is a local hybrid (dense semantic + sparse BM25) search index over the \
+user's code and documentation. Use it to recall facts that live in the indexed \
+corpus — other repos, internal docs, large trees you can't see in the open \
+workspace.
+
+Use it well:
+- Call qdrant_list_scopes() once to see which projects are indexed (names, \
+tags), then scope your searches.
+- qdrant_find(query, scope): OMIT scope to auto-scope to the current workspace; \
+pass scope=["project","tag"] to target specific projects; use scope=["*"] \
+(entire corpus) only as a last resort — it is the noisiest option.
+- Put exact identifiers, symbols, filenames, and flags VERBATIM in the query \
+(the BM25 channel matches them precisely) AND phrase the concept in natural \
+language (the dense channel). One query covers both.
+- Prefer qdrant_find over grepping large or sibling repos. But if the answer \
+is in a file already open in the workspace, just read that file — don't search.
+- Each result cites a source_uri; open it for full context instead of relying \
+on the snippet alone.
+- Use qdrant_store(text, title, session_id) to persist a decision or summary \
+back into the index (it auto-expires after the configured TTL).
+"""
+
+
 def _build_mcp(cfg, embedder, store) -> FastMCP:
-    mcp = FastMCP("ccmcp", instructions="Hybrid vector search over your codebase")
+    mcp = FastMCP("ccmcp", instructions=CCMCP_INSTRUCTIONS)
     path_index = _build_path_index(cfg)
 
     @mcp.tool(description=(
@@ -171,7 +229,12 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
         "Pass `scope` as a list of project names or tags (from qdrant_list_scopes) "
         "to restrict results to specific projects. "
         "Omit `scope` to use automatic project scoping based on the active workspace. "
-        'Pass `scope=[\"*\"]` to search the full corpus regardless of active project.'
+        'Pass `scope=["*"]` to search the full corpus regardless of active project.'
+        " Tip: include exact symbols, filenames, and flags VERBATIM (the BM25"
+        " channel matches them precisely) AND phrase the concept in prose"
+        " (the dense channel). One query covers both. Call qdrant_list_scopes"
+        ' first and scope your query; reserve scope=["*"] for genuine'
+        " cross-corpus needs."
     ))
     async def qdrant_find(
         query: str,
@@ -204,15 +267,16 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
     @mcp.tool(description=(
         "List all project scopes available in the knowledge base. "
         "Returns project names, tags, and root paths for every project "
-        "that was indexed with a .ccmcp marker file. "
-        "Use the names or tags returned here in the `scope` parameter of qdrant_find."
+        "indexed with scope metadata declared in config. Call this BEFORE "
+        "qdrant_find to discover valid scope values for the current corpus."
     ))
     def qdrant_list_scopes() -> str:
         scopes = store.list_scopes()
         if not scopes:
             return (
                 "No project scopes found. "
-                "Add a .ccmcp file to a project root and re-index to enable scoping."
+                "Add a path entry with `name:` and optional `tags:` under "
+                "`sources.filesystem.paths` in config.yaml and re-index to enable scoping."
             )
         lines = [f"{len(scopes)} project scope(s) in the knowledge base:\n"]
         for s in scopes:
@@ -228,7 +292,12 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
         return "\n".join(lines)
 
     @mcp.tool(description=(
-        "Store a note or artifact in the knowledge base so it can be retrieved later."
+        "Store a note or artifact in the knowledge base so it can be retrieved "
+        "later. Writes to a separate `ccmcp-artifacts` collection (NOT the main "
+        "index of the user's code/docs), and entries auto-expire after the "
+        "configured `state.artifact_ttl_days` (default 30 days). Useful for "
+        "persisting a decision, summary, or work-in-progress context between "
+        "sessions."
     ))
     def qdrant_store(text: str, title: str = "", session_id: str = "") -> str:
         dense, sparse_list = embedder.embed([text])

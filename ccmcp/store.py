@@ -25,12 +25,16 @@ def _sparse_vec(s: SparseEmbedding) -> models.SparseVector:
 class VectorStore:
     def __init__(
         self,
-        url: str,
-        collection: str,
+        url: str = "",
+        collection: str = "techdocs",
         api_key: str = "",
         artifact_collection: str = _ARTIFACT_COLLECTION,
+        client: QdrantClient | None = None,
     ):
-        self._client = QdrantClient(url=url, api_key=api_key or None)
+        # `client` overrides url/api_key — used by tests with QdrantClient(":memory:").
+        self._client = client if client is not None else QdrantClient(
+            url=url, api_key=api_key or None
+        )
         self._collection = collection
         self._artifact_collection = artifact_collection
 
@@ -156,11 +160,21 @@ class VectorStore:
         filter: models.Filter | None = None,
     ) -> list[dict]:
         t0 = time.perf_counter()
+        # Push the filter into each prefetch — not just the outer query_filter —
+        # so each branch returns its top-K from the FILTERED candidate set
+        # rather than fusing the unfiltered top-20s and filtering only at the
+        # end. This also makes the filter take effect under qdrant-client's
+        # local in-memory mode (which only honours prefetch-level filters with
+        # FusionQuery, not the outer query_filter).
         results = self._client.query_points(
             collection_name=self._collection,
             prefetch=[
-                models.Prefetch(query=dense.tolist(), using="dense", limit=20),
-                models.Prefetch(query=_sparse_vec(sparse), using="sparse", limit=20),
+                models.Prefetch(
+                    query=dense.tolist(), using="dense", limit=20, filter=filter,
+                ),
+                models.Prefetch(
+                    query=_sparse_vec(sparse), using="sparse", limit=20, filter=filter,
+                ),
             ],
             query=models.FusionQuery(fusion=models.Fusion.RRF),
             query_filter=filter,

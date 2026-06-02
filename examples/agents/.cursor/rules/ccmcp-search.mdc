@@ -1,0 +1,19 @@
+---
+description: How to use the ccmcp MCP knowledge base efficiently
+alwaysApply: false
+---
+
+When a question's answer likely lives in another repo, internal docs, or a
+large tree not open in the workspace, use the ccmcp MCP server rather than
+grepping:
+
+- `qdrant_list_scopes()` first to discover indexed projects (names/tags).
+- `qdrant_find(query, scope)`: omit `scope` to auto-scope to the workspace;
+  pass `scope=["proj","tag"]` to target projects; `scope=["*"]` only as a last
+  resort — it is the noisiest option.
+- Put exact identifiers/flags VERBATIM in the query AND phrase the concept in
+  prose (hybrid dense+BM25 search uses both channels).
+- Open the returned `source_uri` for full context. If the answer is in an open
+  file, read it directly instead of searching.
+- `qdrant_store(text, title, session_id)` to persist decisions or summaries
+  (TTL-expired, separate artifacts collection).

@@ -203,6 +203,7 @@ state:
 | `CCMCP_SOURCE_PATH` | Overrides `sources.filesystem.paths` with a single path. Used by the Docker entrypoint; project name is derived from the path basename |
 | `CCMCP_HOST_MOUNT` | Host-side prefix to remap before matching MCP workspace roots (paired with `CCMCP_CONTAINER_MOUNT`). See [Workspace scoping under Docker](#workspace-scoping-under-docker) |
 | `CCMCP_CONTAINER_MOUNT` | Container-side prefix that `CCMCP_HOST_MOUNT` is remapped to |
+| `CCMCP_PATH_MAPS` | JSON object `{"/host":"/container",…}` for multi-mount setups; longest host-prefix wins. Use instead of (or alongside) the single-pair env vars above |
 | `QDRANT_URL` | Qdrant endpoint |
 | `QDRANT_API_KEY` | Qdrant Cloud API key |
 | `QDRANT_COLLECTION` | Override the configured Qdrant collection name |
@@ -233,9 +234,17 @@ ccmcp scan
 ccmcp reset
 ```
 
-Without the wrapper, prefix each command with `docker compose exec ccmcp`:
+Without the wrapper, two forms exist depending on whether the main `ccmcp`
+service is already running:
+
 ```bash
+# Running container — `ccmcp ccmcp …` is intentional: the second `ccmcp` is
+# the CLI invoked inside the container.
 docker compose exec ccmcp ccmcp status
+
+# Cold start — `docker compose run --rm` boots a one-shot container and
+# passes the args straight to the entrypoint, so the CLI name is dropped.
+docker compose run --rm ccmcp status
 ```
 
 Inside the container: repos at `/repos/`, rotation matrix and state DB at `/data/`, Qdrant at `http://qdrant:6333` — all wired automatically. No config file needed for basic use.
@@ -386,7 +395,23 @@ To search everything: scope=["*"]
 ```
 
 **`qdrant_store(text, title="", session_id="")`**
-Write a note or artifact into the knowledge base. Useful for Claude to save decisions, summaries, or work-in-progress context. Artifacts expire after `state.artifact_ttl_days` days (default 30).
+Write a note or artifact into the knowledge base. Useful for Claude to save decisions, summaries, or work-in-progress context. Artifacts expire after `state.artifact_ttl_days` days (default 30). Writes to a separate `ccmcp-artifacts` collection — not the main code/docs index.
+
+### Using ccmcp from an agent
+
+The server ships built-in usage guidance via the MCP `instructions` field, so every connected agent automatically receives a concise primer the first time it sees the server. Distilled, the workflow that gets the most out of ccmcp is:
+
+1. **Discover scope first.** Call `qdrant_list_scopes()` to learn which projects are indexed before searching blindly.
+2. **Scope every query.** Omit `scope` to auto-scope to the open workspace, pass `scope=["proj","tag"]` for cross-project searches, and reserve `scope=["*"]` for the rare full-corpus case — it is the noisiest option.
+3. **Use both channels.** Include exact symbols, filenames, and flags VERBATIM (BM25 matches them precisely) AND describe the concept in prose (the dense channel finds semantically related content). A single query covers both.
+4. **Open the citation.** Each result includes `source_uri` — open it for full context rather than relying on the snippet alone.
+5. **Skip ccmcp for open files.** If the answer is in a file already in the workspace, just read it. ccmcp is for things you can't already see.
+6. **Persist with `qdrant_store`.** Save decisions or summaries back into the artifacts collection; they auto-expire after the configured TTL.
+
+For tighter per-agent integration (a workflow-level reminder, not just a tool-level one), copy the example skill / rule files in [`examples/agents/`](examples/agents/):
+
+- `examples/agents/.claude/skills/ccmcp-search/SKILL.md` — drop into `~/.claude/skills/`
+- `examples/agents/.cursor/rules/ccmcp-search.mdc` — drop into a project's `.cursor/rules/`
 
 ---
 
@@ -449,10 +474,22 @@ environment:
 > before falling back to unscoped search. Tail the container logs while the
 > agent runs its first query to verify auto-scoping kicked in.
 
-> **Limitation:** only a single host→container pair is supported per
-> container. Multi-mount setups need to run separate ccmcp containers per
-> mount, or fall back to explicit `scope=[…]` in the agent's `qdrant_find`
-> calls.
+#### Multi-mount setups
+
+When a single container mounts multiple host directories under distinct
+container paths, set `CCMCP_PATH_MAPS` to a JSON object of host→container
+mappings instead of (or in addition to) the single-pair env vars:
+
+```yaml
+environment:
+  CCMCP_PATH_MAPS: >
+    {"/Users/alice/code/api": "/repos-api",
+     "/Users/alice/code/web": "/repos-web"}
+```
+
+Longest host-prefix wins, so nested mounts (`/code` and `/code/api`) resolve
+correctly. The legacy `CCMCP_HOST_MOUNT` / `CCMCP_CONTAINER_MOUNT` pair still
+works and is included in the lookup if set.
 
 ### Agent-controlled scoping (explicit)
 
