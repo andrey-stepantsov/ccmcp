@@ -48,7 +48,7 @@ REPOS_PATH=~/code docker compose up -d
 ```
 
 That's it. ccmcp will:
-1. Start Qdrant
+1. Start Qdrant (exposed on `localhost:6333` for inspection)
 2. Generate the rotation matrix and create collections (`ccmcp init`)
 3. Index everything under `~/code` on first startup
 4. Watch for changes and re-index modified files in the background
@@ -67,6 +67,29 @@ That's it. ccmcp will:
   }
 }
 ```
+
+> **Enable workspace auto-scoping** (recommended): edit `docker-compose.yml` and
+> uncomment the `CCMCP_HOST_MOUNT` / `CCMCP_CONTAINER_MOUNT` lines under the
+> `ccmcp` service. Without them, Claude Code's workspace root won't match any
+> indexed project and search silently falls back to the full corpus.
+> See [Workspace scoping under Docker](#workspace-scoping-under-docker) below.
+
+#### Pin to a release
+
+The compose file ships with `image: ghcr.io/andrey-stepantsov/ccmcp:latest`,
+which tracks `main` and moves on every push. For reproducible installs, pin to
+a release:
+
+```yaml
+# docker-compose.yml — ccmcp service
+image: ghcr.io/andrey-stepantsov/ccmcp:0.2.1   # immutable release pin
+# image: ghcr.io/andrey-stepantsov/ccmcp:0.2   # rolling 0.2.x (gets 0.2.x patches)
+```
+
+Published tags per release: `:X.Y.Z` (immutable), `:X.Y` (rolling minor),
+`:sha-<commit>` (per-commit pin), plus `:latest` and `:main` for tracking
+`main`. List available tags at
+[ghcr.io/andrey-stepantsov/ccmcp](https://github.com/andrey-stepantsov/ccmcp/pkgs/container/ccmcp).
 
 ---
 
@@ -177,9 +200,13 @@ state:
 | Variable | Description |
 |---|---|
 | `CCMCP_CONFIG` | Config file path (default: `config.yaml` in working directory) |
-| `CCMCP_SOURCE_PATH` | Overrides `sources.filesystem.paths` — used by Docker entrypoint |
+| `CCMCP_SOURCE_PATH` | Overrides `sources.filesystem.paths` with a single path. Used by the Docker entrypoint; project name is derived from the path basename |
+| `CCMCP_HOST_MOUNT` | Host-side prefix to remap before matching MCP workspace roots (paired with `CCMCP_CONTAINER_MOUNT`). See [Workspace scoping under Docker](#workspace-scoping-under-docker) |
+| `CCMCP_CONTAINER_MOUNT` | Container-side prefix that `CCMCP_HOST_MOUNT` is remapped to |
 | `QDRANT_URL` | Qdrant endpoint |
 | `QDRANT_API_KEY` | Qdrant Cloud API key |
+| `QDRANT_COLLECTION` | Override the configured Qdrant collection name |
+| `FASTEMBED_CACHE_PATH` | ONNX model cache directory (`/models` in Docker; defaults to `/tmp/fastembed_cache`). Set to a persistent path to avoid re-downloading on container restart |
 | `ANTHROPIC_API_KEY` | For future Phase 2 proposition extraction (not yet active) |
 
 ---
@@ -393,7 +420,39 @@ Every chunk indexed from a path with metadata is stamped with `name`, `tags`, an
 
 When an AI assistant opens a project (Claude Code sends its workspace root via the MCP protocol), `qdrant_find` automatically restricts results to that project's chunks, plus any additional projects declared in `include`.
 
-This requires no action from the agent — it happens transparently based on which directory is open.
+This requires no action from the agent — it happens transparently based on which directory is open. ccmcp uses **longest-ancestor-prefix** matching, so opening a subdirectory of an indexed project still resolves to that project.
+
+### Workspace scoping under Docker
+
+When ccmcp runs inside Docker, the indexed paths are container-side (e.g. `/repos/my-project`). The MCP client (Claude Code, Cursor) runs on the host and sends a host-side workspace root (e.g. `/home/alice/code/my-project`). Without a translation step, the host root won't match any configured path and auto-scoping silently falls back to full-corpus search.
+
+Set the following two env vars on the `ccmcp` container so workspace roots arriving from the host are remapped before matching:
+
+```yaml
+# docker-compose.yml — ccmcp service environment
+CCMCP_HOST_MOUNT: /home/alice/code          # what the agent sees
+CCMCP_CONTAINER_MOUNT: /repos               # what ccmcp indexes
+```
+
+With these set, a Claude Code workspace root of `file:///home/alice/code/my-project` is remapped to `/repos/my-project` before the longest-prefix match, and `qdrant_find` correctly scopes to that project's chunks.
+
+The shipped `docker-compose.yml` has these lines commented out — uncomment them and set the host path to whatever you passed as `REPOS_PATH`:
+
+```yaml
+environment:
+  CCMCP_HOST_MOUNT: ${REPOS_PATH:-$HOME/code}
+  CCMCP_CONTAINER_MOUNT: /repos
+```
+
+> **Confirming it's wired correctly:** if no MCP root matches any configured
+> path, ccmcp logs a one-line warning (`no configured source matches MCP roots …`)
+> before falling back to unscoped search. Tail the container logs while the
+> agent runs its first query to verify auto-scoping kicked in.
+
+> **Limitation:** only a single host→container pair is supported per
+> container. Multi-mount setups need to run separate ccmcp containers per
+> mount, or fall back to explicit `scope=[…]` in the agent's `qdrant_find`
+> calls.
 
 ### Agent-controlled scoping (explicit)
 
@@ -483,7 +542,16 @@ histogram_quantile(0.5, rate(ccmcp_chunk_chars_bucket[1h]))
 
 Files are discovered by walking configured paths, filtered by extension and ignore patterns. Changed files are detected by SHA-256 content hash; unchanged files are skipped. New content is upserted into Qdrant **before** old vectors are deleted, so the collection is never incomplete during updates.
 
-Supported by default: `.md .rst .txt .py .go .rs .js .ts .yaml .yml .json .c .cpp .h`
+Supported by default: `.md .rst .txt .py .go .rs .js .ts .yaml .yml .c .cpp .cc .cxx .h .hpp .hh`
+
+> `.json` is **not** in the defaults — lockfiles and generated schemas inflate
+> the index with low-value chunks. Add it to `sources.filesystem.extensions` in
+> `config.yaml` if you index hand-written JSON.
+
+A per-path `.gitignore` is honoured by default (cascading with parent `.gitignore`
+files, supporting `**`, anchored patterns, and within-file `!` negation). Disable
+this with `sources.filesystem.respect_gitignore: false` if you want every file
+matching `extensions` indexed regardless.
 
 ### Web URLs and sitemaps
 
@@ -505,7 +573,8 @@ Documents are split into 50–512 token chunks at natural boundaries:
 | reStructuredText (`.rst`) | Section title underlines, then paragraphs |
 | Python / Go / Rust | Top-level `def`, `class`, `func`, `fn`, `impl` |
 | JavaScript / TypeScript | Top-level `function`, `class`, `const`/`let`/`var` with arrow functions |
-| Plain text / YAML / JSON | Blank-line paragraph boundaries |
+| C / C++ (`.c .cpp .cc .cxx .h .hpp .hh`) | Top-level function definitions / declarations |
+| Plain text / YAML | Blank-line paragraph boundaries |
 
 Each chunk prefixes the nearest heading so retrieval context is self-contained. Chunks smaller than 50 tokens are merged with the next chunk.
 
@@ -550,6 +619,7 @@ Exits 0 if all scenarios pass, 1 otherwise. Safe to run in CI alongside unit tes
 **Qdrant connection refused**
 - Check Qdrant is running: `curl http://localhost:6333/healthz`
 - In Docker, ensure the `qdrant` service is healthy before `ccmcp` starts (the entrypoint polls until ready).
+- The shipped `docker-compose.yml` publishes Qdrant on `localhost:6333` so the host can inspect it (`/healthz`, `/collections`, `/metrics`). If you'd rather keep it network-internal, delete the `qdrant.ports` stanza; the `ccmcp` container reaches Qdrant via the internal `http://qdrant:6333` regardless.
 
 **`rotation_matrix.npy` already exists error**
 - This is intentional. Regenerating the matrix invalidates all vectors. Run `ccmcp reset` first if you want to start over from scratch.

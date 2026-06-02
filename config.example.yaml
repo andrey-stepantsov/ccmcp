@@ -29,6 +29,10 @@ sources:
       #   include: [shared-lib]           # pull in chunks tagged shared-lib at query time
     watch: true
     poll_interval: 30  # seconds between filesystem polls (used in Docker)
+    # When true (default), each path's .gitignore is honoured during scan and
+    # watch — files matched by a gitignore pattern (anchored, **, !-negated)
+    # are not indexed. Set false to ignore .gitignore files entirely.
+    respect_gitignore: true
     extensions:
       - ".md"
       - ".rst"
@@ -40,10 +44,16 @@ sources:
       - ".ts"
       - ".yaml"
       - ".yml"
-      - ".json"
       - ".c"
       - ".cpp"
+      - ".cc"     # C++ — function-level chunked
+      - ".cxx"    # C++ — function-level chunked
       - ".h"
+      - ".hpp"    # C++ header — function-level chunked
+      - ".hh"     # C++ header — function-level chunked
+      # .json is NOT in the defaults: lockfiles and generated schemas inflate
+      # the index with low-value chunks. Add it back here only if you index
+      # hand-written JSON docs (e.g. RFC-style schemas) and want them found.
     ignore:
       - "node_modules"
       - ".git"

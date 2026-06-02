@@ -2,10 +2,20 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     restart: unless-stopped
+    ports:
+      # Published so the host can curl :6333/healthz, scroll the collection,
+      # and scrape Qdrant's own /metrics. Remove this stanza if you want
+      # Qdrant to stay network-internal.
+      - "${QDRANT_PORT:-6333}:6333"
     volumes:
       - qdrant-data:/qdrant/storage
 
   ccmcp:
+    # Pin to a released version for reproducible installs. Examples:
+    #   image: ghcr.io/andrey-stepantsov/ccmcp:0.2.1   (immutable release pin)
+    #   image: ghcr.io/andrey-stepantsov/ccmcp:0.2     (rolling 0.2.x)
+    # `:latest` tracks main and is mutable — fine for trying ccmcp out,
+    # not recommended for production.
     image: ghcr.io/andrey-stepantsov/ccmcp:latest
     # build: .  # uncomment to build locally instead
     restart: unless-stopped
@@ -15,11 +25,24 @@ services:
       - "7700:7700"
     volumes:
       - ccmcp-data:/data
+      # Persistent ONNX model cache so `docker compose run --rm ccmcp …`
+      # doesn't re-download ~60 MB of fastembed models on every invocation.
+      # The volume is seeded from the image's pre-baked /models on first start.
+      - ccmcp-models:/models
       - ${REPOS_PATH:-$HOME/code}:/repos:ro
     environment:
       QDRANT_URL: http://qdrant:6333
       CCMCP_SOURCE_PATH: /repos
+      FASTEMBED_CACHE_PATH: /models
+      # Auto-scoping under Docker — when set, an MCP client (Claude Code,
+      # Cursor) running on the host can have its workspace root remapped to
+      # the container-side index path before matching. Without this, the
+      # host path won't match anything and search silently falls back to
+      # the full corpus. See "Workspace scoping under Docker" in the README.
+      # CCMCP_HOST_MOUNT: ${REPOS_PATH:-$HOME/code}
+      # CCMCP_CONTAINER_MOUNT: /repos
 
 volumes:
   qdrant-data:
   ccmcp-data:
+  ccmcp-models:

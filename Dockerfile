@@ -16,16 +16,21 @@ COPY ccmcp/ ccmcp/
 # Install runtime dependencies (no dev extras)
 RUN uv pip install --system --no-cache -e .
 
-# Pre-download embedding models so first startup is instant
+# Bake the ONNX models into /models so the first scan is instant and so the
+# ccmcp-models named volume gets seeded on its first mount in compose.
+# FASTEMBED_CACHE_PATH must be set BEFORE the download so fastembed writes
+# here instead of /tmp/fastembed_cache.
+ENV FASTEMBED_CACHE_PATH=/models
 RUN python - <<'EOF'
 from fastembed import TextEmbedding, SparseTextEmbedding
 TextEmbedding("BAAI/bge-small-en-v1.5")
 SparseTextEmbedding("Qdrant/bm25")
 EOF
 
-# /data  — rotation matrix + SQLite state DB (named volume)
-# /repos — source files (bind-mounted by user, read-only)
-VOLUME ["/data", "/repos"]
+# /data   — rotation matrix + SQLite state DB (named volume in compose)
+# /repos  — source files (bind-mounted by user, read-only)
+# /models — ONNX model cache (named volume in compose)
+VOLUME ["/data", "/repos", "/models"]
 
 EXPOSE 7700
 
