@@ -546,6 +546,12 @@ The MCP SSE server exposes Prometheus metrics at `GET /metrics` on the same port
 | `ccmcp_chunks_ingested_total` | Chunks written to Qdrant |
 | `ccmcp_ingest_errors_total` | Documents that raised during ingestion |
 
+**MCP-tool interaction mix** (counters):
+| Metric | Description |
+|---|---|
+| `ccmcp_tool_calls_total{tool}` | Calls to each MCP tool (`qdrant_find`, `qdrant_list_scopes`, `qdrant_store`). Without this only `search()` (inside `qdrant_find`) is observable; store/list traffic is otherwise dark |
+| `ccmcp_find_requests_total{scope_mode}` | `qdrant_find` calls bucketed by how `scope` was resolved: `auto_scoped` (workspace root matched), `auto_fallback` (no match — silent full-corpus search), `explicit` (caller passed a real list), `wildcard` (caller passed `["*"]` or `[]`). Watch the `auto_fallback` rate — it is the F7-class scope-leak signal: agents searching the whole corpus when they meant to scope to a project |
+
 ### Prometheus + Grafana
 
 Add a scrape job to your `prometheus.yml`:
@@ -569,6 +575,17 @@ histogram_quantile(0.95, rate(ccmcp_search_seconds_bucket[5m]))
 
 # Median chunk size (chars)
 histogram_quantile(0.5, rate(ccmcp_chunk_chars_bucket[1h]))
+
+# Zero-result rate — fraction of searches that returned nothing
+sum(rate(ccmcp_search_results_returned_bucket{le="0"}[10m]))
+  / sum(rate(ccmcp_search_results_returned_count[10m]))
+
+# Auto-scope fallback rate — alert: agents silently searching full corpus
+sum(rate(ccmcp_find_requests_total{scope_mode="auto_fallback"}[10m]))
+  / sum(rate(ccmcp_find_requests_total[10m]))
+
+# Tool-call mix — what are agents actually doing?
+sum by (tool) (rate(ccmcp_tool_calls_total[5m]))
 ```
 
 ---

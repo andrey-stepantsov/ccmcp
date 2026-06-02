@@ -242,14 +242,24 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
         scope: list[str] | None = None,
         ctx: Context | None = None,
     ) -> str:
+        from ccmcp.metrics import FIND_REQUESTS, TOOL_CALLS
+
         query = query[:8192]
         limit = max(1, min(limit, cfg.mcp.result_limit))
 
         if scope is not None:
-            # Explicit scope overrides automatic root-based filtering.
-            search_filter = None if (not scope or scope == ["*"]) else _scope_filter(scope)
+            if not scope or scope == ["*"]:
+                search_filter = None
+                scope_mode = "wildcard"
+            else:
+                search_filter = _scope_filter(scope)
+                scope_mode = "explicit"
         else:
             search_filter = await _roots_filter(ctx, path_index) if ctx is not None else None
+            scope_mode = "auto_scoped" if search_filter is not None else "auto_fallback"
+
+        TOOL_CALLS.labels(tool="qdrant_find").inc()
+        FIND_REQUESTS.labels(scope_mode=scope_mode).inc()
 
         dense, sparse_list = embedder.embed([query])
         results = store.search(dense[0], sparse_list[0], limit=limit, filter=search_filter)
@@ -271,6 +281,8 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
         "qdrant_find to discover valid scope values for the current corpus."
     ))
     def qdrant_list_scopes() -> str:
+        from ccmcp.metrics import TOOL_CALLS
+        TOOL_CALLS.labels(tool="qdrant_list_scopes").inc()
         scopes = store.list_scopes()
         if not scopes:
             return (
@@ -300,6 +312,8 @@ def _build_mcp(cfg, embedder, store) -> FastMCP:
         "sessions."
     ))
     def qdrant_store(text: str, title: str = "", session_id: str = "") -> str:
+        from ccmcp.metrics import TOOL_CALLS
+        TOOL_CALLS.labels(tool="qdrant_store").inc()
         dense, sparse_list = embedder.embed([text])
         point_id = store.store_artifact(
             text=text,

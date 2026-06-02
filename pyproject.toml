@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ccmcp"
-version = "0.2.2"
+version = "0.2.3"
 description = "Claude Code MCP knowledge base with hybrid vector search"
 requires-python = ">=3.12"
 dependencies = [

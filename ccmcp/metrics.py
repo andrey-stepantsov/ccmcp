@@ -82,6 +82,24 @@ SEARCH_RESULTS_RETURNED = Histogram(
     buckets=[0, 1, 2, 5, 10, 20],
 )
 
+# ── MCP-level visibility ──────────────────────────────────────────────────────
+# Counts qdrant_find calls bucketed by how `scope` was resolved. Critical
+# alert: rising `auto_fallback` rate means agents are searching the full
+# corpus when they meant to scope to a project — silent F7-class scope leak.
+FIND_REQUESTS = Counter(
+    "ccmcp_find_requests_total",
+    "qdrant_find calls by scope resolution mode",
+    ["scope_mode"],
+)
+
+# Counts every MCP tool invocation by tool name. Without this only `search()`
+# is observable (via SEARCH_SECONDS); store/list calls are dark.
+TOOL_CALLS = Counter(
+    "ccmcp_tool_calls_total",
+    "MCP tool calls",
+    ["tool"],
+)
+
 
 # ── Background collection-size poller ─────────────────────────────────────────
 
